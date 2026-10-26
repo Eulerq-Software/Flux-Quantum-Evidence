@@ -97,29 +97,29 @@ This experiment studies the structure of difficult improvements in Flux.
 
 For an incumbent configuration \(x\) and an improved configuration \(y\), the experiment measures the coordinated change width
 
-\[
-k = d_H(x,y),
-\]
+```math
+k = d_H(x,y),$
+```
 
 where \(d_H\) denotes Hamming distance.
 
 It also studies the minimum intermediate barrier \(B\) encountered along local one-variable transition paths and compares it with the final improvement
 
-\[
+```math
 \Delta E = E(x)-E(y).
-\]
+```
 
 The report highlights representative Flux-derived transitions with:
 
-\[
+```math
 k \approx 8-22
-\]
+```
 
 and barrier-to-gain ratios on the order of
 
-\[
+```math
 \frac{B}{\Delta E} \sim 10^2-10^3.
-\]
+```
 
 These measurements support the observation that difficult Flux refinements can require coordinated rearrangements separated by unfavorable intermediate configurations.
 
@@ -135,9 +135,9 @@ The same Flux-derived local optimization problem is evolved while progressively 
 
 The analysis reproduces the reported observation that strong dephasing suppresses useful-state probability substantially, with a median suppression of approximately:
 
-\[
+```math
 94\%.
-\]
+```
 
 This experiment is intended as a control demonstrating that the observed transition dynamics are not reproduced simply by introducing generic stochastic perturbations.
 
@@ -149,31 +149,29 @@ This experiment is intended as a control demonstrating that the observed transit
 
 Many useful Flux refinements naturally involve replacing one competing assignment candidate with another. At the binary-variable level, the basic operation resembles
 
-\[
-|10\rangle \leftrightarrow |01\rangle.
-\]
+$|10\rangle \leftrightarrow |01\rangle.$
 
 This experiment compares generic quantum driving with dynamics constructed around the actual Flux exchange/conflict structure.
 
 The analysis reproduces the key observations that:
 
-\[
+```math
 d_X = k
-\]
+```
 
 for generic one-variable transitions, whereas the Flux-aware exchange structure reduces the driver-graph distance to
 
-\[
+```math
 d_{\mathrm{exchange}} = \frac{k}{2}
-\]
+```
 
 in the tested cases.
 
 Across the eight tested Flux-derived local subproblems, the structured exchange dynamics produced higher target-state probability than the generic transverse-field dynamics in all cases, with a median improvement of approximately:
 
-\[
+```math
 18.1\times.
-\]
+```
 
 Randomized two-variable couplings are also included as a control to distinguish the effect of Flux-specific structure from the effect of merely adding additional interactions.
 
