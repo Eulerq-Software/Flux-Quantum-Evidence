@@ -39,22 +39,18 @@ Flux-Quantum-Evidence/
 ├── raw_scaling/
 │   ├── experiment.py
 │   ├── results/
-│   └── analysis.ipynb
 │
 ├── landscape_structure/
 │   ├── experiment.py
 │   ├── results/
-│   └── analysis.ipynb
 │
 ├── coherence/
 │   ├── experiment.py
 │   ├── results/
-│   └── analysis.ipynb
 │
 └── structured_exchange/
     ├── experiment.py
     ├── results/
-    └── analysis.ipynb
 ```
 
 Each experiment directory contains:
