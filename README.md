@@ -95,15 +95,15 @@ The analysis notebook reproduces the scaling statistics quoted in the report.
 
 This experiment studies the structure of difficult improvements in Flux.
 
-For an incumbent configuration \(x\) and an improved configuration \(y\), the experiment measures the coordinated change width
+For an incumbent configuration $x$ and an improved configuration $y$, the experiment measures the coordinated change width
 
 ```math
 k = d_H(x,y),$
 ```
 
-where \(d_H\) denotes Hamming distance.
+where $d_H$ denotes Hamming distance.
 
-It also studies the minimum intermediate barrier \(B\) encountered along local one-variable transition paths and compares it with the final improvement
+It also studies the minimum intermediate barrier $B$ encountered along local one-variable transition paths and compares it with the final improvement
 
 ```math
 \Delta E = E(x)-E(y).
@@ -149,7 +149,9 @@ This experiment is intended as a control demonstrating that the observed transit
 
 Many useful Flux refinements naturally involve replacing one competing assignment candidate with another. At the binary-variable level, the basic operation resembles
 
-$|10\rangle \leftrightarrow |01\rangle.$
+```math
+|10\rangle \leftrightarrow |01\rangle.
+```
 
 This experiment compares generic quantum driving with dynamics constructed around the actual Flux exchange/conflict structure.
 
