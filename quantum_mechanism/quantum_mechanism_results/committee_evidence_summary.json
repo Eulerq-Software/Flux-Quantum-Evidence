@@ -1,0 +1,65 @@
+{
+  "n_cases": 8,
+  "coherence": {
+    "max_gamma": 1.0,
+    "median_suppression_at_max_gamma": 0.9388108031301714,
+    "mean_suppression_at_max_gamma": -0.5518242870758254,
+    "cases_monotone_within_2se": 7,
+    "n_cases": 8
+  },
+  "driver_control": {
+    "max_no_driver_p_quality": 0.0,
+    "median_best_with_driver_p_quality": 0.004489766098692668
+  },
+  "static_transfer": {
+    "all_k_vs_max_p": {
+      "n": 8,
+      "rho": -0.18531232916527532,
+      "pvalue": 0.6604121165417156
+    },
+    "all_k_vs_peak_time": {
+      "n": 8,
+      "rho": -0.037062465833055065,
+      "pvalue": 0.9305714878144622
+    },
+    "barrier_ratio_vs_max_p": {
+      "n": 8,
+      "rho": -0.9285714285714287,
+      "pvalue": 0.0008629681828999769
+    },
+    "matched_barrier_window": [
+      150.0,
+      500.0
+    ],
+    "matched_n": 6,
+    "matched_k_vs_max_p": {
+      "n": 6,
+      "rho": 0.11952286093343938,
+      "pvalue": 0.8215694433207941
+    },
+    "matched_k_vs_peak_time": {
+      "n": 6,
+      "rho": -0.4780914437337575,
+      "pvalue": 0.33750185654036463
+    }
+  },
+  "raw_adaptive_pt": [
+    {
+      "scale": "15x40",
+      "runs": 4,
+      "best_refinement_fraction": 0.0,
+      "max_roundtrips": 0,
+      "min_blocked_edges": 6,
+      "best_variant": "geometric"
+    },
+    {
+      "scale": "20x50",
+      "runs": 4,
+      "best_refinement_fraction": 0.0,
+      "max_roundtrips": 0,
+      "min_blocked_edges": 12,
+      "best_variant": "geometric"
+    }
+  ],
+  "interpretation_guardrail": "Mechanism evidence only: exact quantum simulations are small-core controls; do not describe these results as end-to-end quantum speedup."
+}

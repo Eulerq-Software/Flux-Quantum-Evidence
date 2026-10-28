@@ -1,0 +1,18 @@
+{
+  "sets": "full_q_15x40_v8,full_q_20x50_v8",
+  "output": "experiments/results/quantum_hardness_hunt_v8",
+  "deadline_minutes": 82.0,
+  "screen_budget_minutes": 18.0,
+  "scip_seconds": 6.0,
+  "selected_per_scale": 5,
+  "nearest_seconds": 25.0,
+  "thermal_max_wall": 45.0,
+  "sa_runs": 8,
+  "sa_sweeps": 32,
+  "pt_ensembles": 3,
+  "pt_sweeps": 24,
+  "barrier_max_k": 16,
+  "quantum_max_k": 12,
+  "seed": 1800000,
+  "started_unix": 1792902550.8755887
+}

@@ -1,0 +1,17 @@
+{
+  "scale": "20x50",
+  "public_set": "quantum_mechanism_rawpt_20x50",
+  "instance_id": "instance_0001",
+  "source_set": "committee_test_20x50_v10",
+  "source_index": 1,
+  "num_riders": 20,
+  "num_orders": 50,
+  "num_candidates": 21127,
+  "file": "instance_0000.npz",
+  "sha256": "ff3039b57a53c406f7aa4e72817a1cbff019b6a226f1310ef3eb4a5e19d1e261",
+  "screening_instance_id": "instance_0001",
+  "distance_gain": 1.637623747857539,
+  "reference_assigned": 40,
+  "reference_distance": 61.118987762420645,
+  "reference_optimize_ms": 7272.515421005664
+}

@@ -1,0 +1,89 @@
+{
+  "v12_num_cases": 8,
+  "v13_num_cases": 8,
+  "common_case_ids": 8,
+  "identical_local_cores": 4,
+  "all_common_cores_identical": false,
+  "comparisons": [
+    {
+      "case_id": 0,
+      "present_in_v12": true,
+      "present_in_v13": true,
+      "same_local_core": true,
+      "v12_core_sha256": "5a5b9a86979e15286f66fc4052852aa3fbd05b5256dc70a9daeef15b47f5471f",
+      "v13_core_sha256": "5a5b9a86979e15286f66fc4052852aa3fbd05b5256dc70a9daeef15b47f5471f",
+      "v12_k": 4,
+      "v13_k": 4
+    },
+    {
+      "case_id": 1,
+      "present_in_v12": true,
+      "present_in_v13": true,
+      "same_local_core": false,
+      "v12_core_sha256": "74bb709b3e8bbda6798ca4a06b03a7e1f70bf315d5b4a5b98668734ec82c3793",
+      "v13_core_sha256": "fbb81e68e00397350b7a74a4c0ca84a451fcbf78187ea4d5e715bc24a0180f34",
+      "v12_k": 8,
+      "v13_k": 8
+    },
+    {
+      "case_id": 2,
+      "present_in_v12": true,
+      "present_in_v13": true,
+      "same_local_core": true,
+      "v12_core_sha256": "5f3a6c492afefa716c02134f3f938c5916a81d3b47be3b350d9393949ff48b93",
+      "v13_core_sha256": "5f3a6c492afefa716c02134f3f938c5916a81d3b47be3b350d9393949ff48b93",
+      "v12_k": 10,
+      "v13_k": 10
+    },
+    {
+      "case_id": 3,
+      "present_in_v12": true,
+      "present_in_v13": true,
+      "same_local_core": true,
+      "v12_core_sha256": "b7d191c8d7a273901ddb085d2cb98c0e7c3c2426f16bd4c9bb28af2cf4d17c16",
+      "v13_core_sha256": "b7d191c8d7a273901ddb085d2cb98c0e7c3c2426f16bd4c9bb28af2cf4d17c16",
+      "v12_k": 12,
+      "v13_k": 12
+    },
+    {
+      "case_id": 4,
+      "present_in_v12": true,
+      "present_in_v13": true,
+      "same_local_core": false,
+      "v12_core_sha256": "0ef4e88c6af918ef2322c40c72ae94b9652a49453cbe3943068decf30d13f7c5",
+      "v13_core_sha256": "415e5c30a5e900137d28a461e0cf7b1f142374edb7d4ac69d6738aa5f62c5d81",
+      "v12_k": 8,
+      "v13_k": 8
+    },
+    {
+      "case_id": 5,
+      "present_in_v12": true,
+      "present_in_v13": true,
+      "same_local_core": false,
+      "v12_core_sha256": "cbae54b39ec3cc0ad422876acd6184a634ff26d36ea54ec69083bf32f8573156",
+      "v13_core_sha256": "be3568fba4528eba1b242101e4ca98b1d8e32d76bef62a296349eb15da96b61b",
+      "v12_k": 10,
+      "v13_k": 10
+    },
+    {
+      "case_id": 6,
+      "present_in_v12": true,
+      "present_in_v13": true,
+      "same_local_core": true,
+      "v12_core_sha256": "f36ac5f49af136ec80365a08a6e257d0c0b28a070eb2816a241fb7e8f9857a84",
+      "v13_core_sha256": "f36ac5f49af136ec80365a08a6e257d0c0b28a070eb2816a241fb7e8f9857a84",
+      "v12_k": 12,
+      "v13_k": 12
+    },
+    {
+      "case_id": 7,
+      "present_in_v12": true,
+      "present_in_v13": true,
+      "same_local_core": false,
+      "v12_core_sha256": "c23a375fe467c54ac075a788905aef5e1ee87b9d091e34676d9b527ee3b25d9e",
+      "v13_core_sha256": "7d7255c60d974e0fdd0972ce289a1f00898c2a5ce237763886e95071c95122e9",
+      "v12_k": 8,
+      "v13_k": 8
+    }
+  ]
+}

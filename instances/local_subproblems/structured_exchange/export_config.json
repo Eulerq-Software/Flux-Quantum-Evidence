@@ -1,0 +1,7 @@
+{
+  "source_variant": "structured_exchange_v13",
+  "seed": 131313,
+  "nearest_seconds": 8.0,
+  "max_k": 12,
+  "n_cases": 8
+}

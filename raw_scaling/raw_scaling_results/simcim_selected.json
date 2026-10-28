@@ -1,0 +1,35 @@
+{
+  "10x25": {
+    "config_id": 15,
+    "coupling": 0.6,
+    "noise": 0.02,
+    "pump_start": -0.05,
+    "pump_end": 0.02,
+    "warm_alpha": 0.7,
+    "warm_std": 0.03,
+    "momentum": 0.9,
+    "saturation": 1.0
+  },
+  "15x40": {
+    "config_id": 15,
+    "coupling": 0.6,
+    "noise": 0.02,
+    "pump_start": -0.05,
+    "pump_end": 0.02,
+    "warm_alpha": 0.7,
+    "warm_std": 0.03,
+    "momentum": 0.9,
+    "saturation": 1.0
+  },
+  "20x50": {
+    "config_id": 15,
+    "coupling": 0.6,
+    "noise": 0.02,
+    "pump_start": -0.05,
+    "pump_end": 0.02,
+    "warm_alpha": 0.7,
+    "warm_std": 0.03,
+    "momentum": 0.9,
+    "saturation": 1.0
+  }
+}

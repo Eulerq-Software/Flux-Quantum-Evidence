@@ -1,0 +1,7 @@
+{
+  "source_variant": "quantum_mechanism_v12",
+  "seed": 3100000,
+  "nearest_seconds": 30.0,
+  "max_k": null,
+  "n_cases": 8
+}

@@ -1,0 +1,80 @@
+{
+  "v12_case_count": 8,
+  "v13_case_count": 8,
+  "shared_case_count": 8,
+  "all_shared_public_cores_identical": false,
+  "cases": [
+    {
+      "case": "case_000",
+      "same_A": true,
+      "same_energies": true,
+      "same_feasible": true,
+      "same_start_idx": true,
+      "same_target_idx": true,
+      "identical_public_core": true
+    },
+    {
+      "case": "case_001",
+      "same_A": false,
+      "same_energies": false,
+      "same_feasible": false,
+      "same_start_idx": false,
+      "same_target_idx": false,
+      "identical_public_core": false
+    },
+    {
+      "case": "case_002",
+      "same_A": true,
+      "same_energies": true,
+      "same_feasible": true,
+      "same_start_idx": true,
+      "same_target_idx": true,
+      "identical_public_core": true
+    },
+    {
+      "case": "case_003",
+      "same_A": true,
+      "same_energies": true,
+      "same_feasible": true,
+      "same_start_idx": true,
+      "same_target_idx": true,
+      "identical_public_core": true
+    },
+    {
+      "case": "case_004",
+      "same_A": false,
+      "same_energies": false,
+      "same_feasible": false,
+      "same_start_idx": false,
+      "same_target_idx": false,
+      "identical_public_core": false
+    },
+    {
+      "case": "case_005",
+      "same_A": false,
+      "same_energies": false,
+      "same_feasible": false,
+      "same_start_idx": false,
+      "same_target_idx": false,
+      "identical_public_core": false
+    },
+    {
+      "case": "case_006",
+      "same_A": true,
+      "same_energies": true,
+      "same_feasible": true,
+      "same_start_idx": true,
+      "same_target_idx": true,
+      "identical_public_core": true
+    },
+    {
+      "case": "case_007",
+      "same_A": false,
+      "same_energies": false,
+      "same_feasible": false,
+      "same_start_idx": false,
+      "same_target_idx": false,
+      "identical_public_core": false
+    }
+  ]
+}

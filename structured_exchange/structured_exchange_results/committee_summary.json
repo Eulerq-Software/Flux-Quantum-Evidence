@@ -1,0 +1,110 @@
+{
+  "n_cases_compared": 8,
+  "structured_beats_X_cases_gt5pct": 5,
+  "structured_beats_random_cases_gt5pct": 8,
+  "structured_beats_both_cases_gt5pct": 5,
+  "median_structured_over_X": 1.5737336702077533,
+  "median_structured_over_random": 9.78005146749477,
+  "median_fractional_driver_graph_distance_reduction_vs_X": 0.5,
+  "comparisons": [
+    {
+      "case_id": 0,
+      "k": 4,
+      "barrier_over_gain": 0.9082263598305256,
+      "p_target_X": 0.7036912978647847,
+      "p_target_structured": 0.7554428202215532,
+      "p_target_random_control": 0.4354066848962429,
+      "structured_over_X": 1.0735429335474214,
+      "structured_over_random": 1.7350280701399305,
+      "graph_distance_X": 4,
+      "graph_distance_structured": 2
+    },
+    {
+      "case_id": 1,
+      "k": 8,
+      "barrier_over_gain": 204.8310350025889,
+      "p_target_X": 1.6454848873073865e-09,
+      "p_target_structured": 0.0017904659647737914,
+      "p_target_random_control": 6.409122829010449e-08,
+      "structured_over_X": 1088108.4223773375,
+      "structured_over_random": 27936.20925268231,
+      "graph_distance_X": 8,
+      "graph_distance_structured": 4
+    },
+    {
+      "case_id": 2,
+      "k": 10,
+      "barrier_over_gain": 198.5609704186889,
+      "p_target_X": 3.4600246877191455e-10,
+      "p_target_structured": 3.19030531399571e-10,
+      "p_target_random_control": 5.8124802453743484e-11,
+      "structured_over_X": 0.9220469799881009,
+      "structured_over_random": 5.488715968599805,
+      "graph_distance_X": 10,
+      "graph_distance_structured": 5
+    },
+    {
+      "case_id": 3,
+      "k": 12,
+      "barrier_over_gain": 263.3588571777545,
+      "p_target_X": 3.2875987085292813e-11,
+      "p_target_structured": 1.0486936023000662e-10,
+      "p_target_random_control": 2.496135453275879e-13,
+      "structured_over_X": 3.189846740051808,
+      "structured_over_random": 420.1268809045525,
+      "graph_distance_X": 12,
+      "graph_distance_structured": 6
+    },
+    {
+      "case_id": 4,
+      "k": 8,
+      "barrier_over_gain": 656.9629075040822,
+      "p_target_X": 5.055079855963916e-12,
+      "p_target_structured": 1.6998579597002608e-11,
+      "p_target_random_control": 1.881237926376584e-12,
+      "structured_over_X": 3.362672812566533,
+      "structured_over_random": 9.035847809927606,
+      "graph_distance_X": 8,
+      "graph_distance_structured": 4
+    },
+    {
+      "case_id": 5,
+      "k": 10,
+      "barrier_over_gain": 430.4220069519248,
+      "p_target_X": 4.0207594818568685e-12,
+      "p_target_structured": 8.338751223569235e-12,
+      "p_target_random_control": 5.245125837808188e-13,
+      "structured_over_X": 2.0739244068680853,
+      "structured_over_random": 15.898095644267325,
+      "graph_distance_X": 10,
+      "graph_distance_structured": 5
+    },
+    {
+      "case_id": 6,
+      "k": 12,
+      "barrier_over_gain": 198.8196859543414,
+      "p_target_X": 1.0006702940394852e-10,
+      "p_target_structured": 3.069800651808655e-11,
+      "p_target_random_control": 2.916881637065587e-12,
+      "structured_over_X": 0.306774436104878,
+      "structured_over_random": 10.524255125061934,
+      "graph_distance_X": 12,
+      "graph_distance_structured": 6
+    },
+    {
+      "case_id": 7,
+      "k": 8,
+      "barrier_over_gain": 356.20500233502196,
+      "p_target_X": 2.1371996757451266e-10,
+      "p_target_structured": 1.5838961145768495e-10,
+      "p_target_random_control": 3.2007407900442866e-11,
+      "structured_over_X": 0.7411081578161994,
+      "structured_over_random": 4.948529788802217,
+      "graph_distance_X": 8,
+      "graph_distance_structured": 4
+    }
+  ],
+  "mode": "full",
+  "n_cases": 8,
+  "interpretation_guardrail": "Positive structured-driver results are mechanism evidence for problem-aware coherent exchange mixers; they are not an end-to-end quantum speedup claim. The random-edge control tests whether Flux structure, rather than simply adding two-qubit couplings, is responsible."
+}

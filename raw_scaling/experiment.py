@@ -68,9 +68,7 @@ REPO = HERE.parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from experiments.instance_source import load_instance_set  # noqa: E402
-from solvers.candidate_pool import CandidatePool  # noqa: E402
-from experiments import eulerq_quantum_hardness_hunt_v8 as v8  # noqa: E402
+from common.problem_data import ProblemData, load_problem_set  # noqa: E402
 
 
 # -----------------------------------------------------------------------------
@@ -100,12 +98,6 @@ def write_json(path: Path, obj: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2, allow_nan=True), encoding="utf-8")
 
-
-def iid(inst: Any, idx: int) -> str:
-    for a in ("instance_id", "id", "name"):
-        if hasattr(inst, a) and getattr(inst, a) is not None:
-            return str(getattr(inst, a))
-    return f"instance_{idx:04d}"
 
 
 def lex_better(a1: int, d1: float, a2: int, d2: float) -> bool:
@@ -153,35 +145,165 @@ def tuning_score(
     return refinement_fraction(start_a, start_d, result_a, result_d, ref_a, ref_d)
 
 
+
+# -----------------------------------------------------------------------------
+# Public candidate-selection helpers
+# -----------------------------------------------------------------------------
+
+
+def eval_bits(bits: np.ndarray, d: ProblemData) -> tuple[int, float, float]:
+    b = np.asarray(bits, dtype=np.int8)
+    assigned = int(b @ d.count.astype(np.int32))
+    distance = float(b @ d.distance)
+    business = float(d.M * assigned - distance)
+    return assigned, distance, business
+
+
+def greedy_pair_first(d: ProblemData) -> np.ndarray:
+    """Deterministic pair-first feasible incumbent used by the original study."""
+    out = np.zeros(d.num_candidates, dtype=np.int8)
+    used_riders: set[int] = set()
+    used_orders: set[int] = set()
+    order = sorted(
+        range(d.num_candidates),
+        key=lambda i: (-int(d.count[i]), float(d.distance[i]), int(i)),
+    )
+    for i in order:
+        r = int(d.rider[i])
+        a = int(d.o1[i])
+        b = int(d.o2[i])
+        if r in used_riders or a in used_orders or (b >= 0 and b in used_orders):
+            continue
+        out[i] = 1
+        used_riders.add(r)
+        used_orders.add(a)
+        if b >= 0:
+            used_orders.add(b)
+    return out
+
+
+@dataclass
+class Occ:
+    rider: np.ndarray
+    order: np.ndarray
+    rider_order: np.ndarray
+    order_pair: np.ndarray
+
+
+def start_occupancy(
+    bits: np.ndarray, d: ProblemData, nr: int, no: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ro = np.zeros(nr, dtype=np.int16)
+    oo = np.zeros(no, dtype=np.int16)
+    r_o = np.zeros((nr, no), dtype=np.int16)
+    op = np.zeros((no, no), dtype=np.int16)
+    for i in np.flatnonzero(bits):
+        r, a, b = int(d.rider[i]), int(d.o1[i]), int(d.o2[i])
+        ro[r] += 1
+        oo[a] += 1
+        r_o[r, a] += 1
+        if b >= 0:
+            oo[b] += 1
+            r_o[r, b] += 1
+            op[a, b] += 1
+            op[b, a] += 1
+    return ro, oo, r_o, op
+
+
+def replicate_occ(
+    base: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    shape: tuple[int, ...],
+) -> Occ:
+    ro, oo, r_o, op = base
+
+    def rep(arr: np.ndarray) -> np.ndarray:
+        return np.broadcast_to(arr, shape + arr.shape).copy()
+
+    return Occ(rep(ro), rep(oo), rep(r_o), rep(op))
+
+
+def neighbor_count(
+    states_i: np.ndarray, occ: Occ, d: ProblemData, i: int
+) -> np.ndarray:
+    """Exact number of selected unique conflict neighbours of candidate i."""
+    r, a, b = int(d.rider[i]), int(d.o1[i]), int(d.o2[i])
+    if b < 0:
+        union = (
+            occ.rider[..., r]
+            + occ.order[..., a]
+            - occ.rider_order[..., r, a]
+        )
+    else:
+        union = (
+            occ.rider[..., r]
+            + occ.order[..., a]
+            + occ.order[..., b]
+            - occ.rider_order[..., r, a]
+            - occ.rider_order[..., r, b]
+            - occ.order_pair[..., a, b]
+            + states_i
+        )
+    return union - states_i
+
+
+def apply_flip_update(
+    occ: Occ, d: ProblemData, i: int, dx: np.ndarray
+) -> None:
+    r, a, b = int(d.rider[i]), int(d.o1[i]), int(d.o2[i])
+    occ.rider[..., r] += dx
+    occ.order[..., a] += dx
+    occ.rider_order[..., r, a] += dx
+    if b >= 0:
+        occ.order[..., b] += dx
+        occ.rider_order[..., r, b] += dx
+        occ.order_pair[..., a, b] += dx
+        occ.order_pair[..., b, a] += dx
+
+
+def feasible_mask(occ: Occ) -> np.ndarray:
+    return (
+        (np.max(occ.rider, axis=-1) <= 1)
+        & (np.max(occ.order, axis=-1) <= 1)
+    )
+
+
 # -----------------------------------------------------------------------------
 # Warm-start SCIP with timing decomposition
 # -----------------------------------------------------------------------------
 
 
 def warm_scip(
-    pool: CandidatePool,
-    d: v8.PoolData,
+    d: ProblemData,
     greedy: np.ndarray,
     limit_s: float,
     seed: int,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
-    model = Model("raw_flux_v10b")
+    model = Model("raw_flux_public")
     model.hideOutput()
     try:
-        model.setIntParam("randomization/randomseedshift", int(seed) % 2147483647)
+        model.setIntParam(
+            "randomization/randomseedshift",
+            int(seed) % 2147483647,
+        )
     except Exception:
         pass
 
-    x = [model.addVar(vtype="B", name=f"x_{i}") for i in range(len(pool.candidates))]
-    for ids in pool.by_rider:
-        if ids:
+    x = [
+        model.addVar(vtype="B", name=f"x_{i}")
+        for i in range(d.num_candidates)
+    ]
+    for ids in d.by_rider:
+        if len(ids) > 0:
             model.addCons(quicksum(x[int(i)] for i in ids) <= 1)
-    for ids in pool.by_order:
-        if ids:
+    for ids in d.by_order:
+        if len(ids) > 0:
             model.addCons(quicksum(x[int(i)] for i in ids) <= 1)
     model.setObjective(
-        quicksum(float(d.raw_reward[i]) * x[i] for i in range(len(x))),
+        quicksum(
+            float(d.raw_reward[i]) * x[i]
+            for i in range(d.num_candidates)
+        ),
         "maximize",
     )
     build_ms = 1000.0 * (time.perf_counter() - t0)
@@ -206,14 +328,15 @@ def warm_scip(
     if model.getNSols() > 0:
         sol = model.getBestSol()
         cand = np.asarray(
-            [int(model.getSolVal(sol, var) > 0.5) for var in x], dtype=np.int8
+            [int(model.getSolVal(sol, var) > 0.5) for var in x],
+            dtype=np.int8,
         )
-        aa, dd, _ = v8.eval_bits(cand, d)
-        ga, gd, _ = v8.eval_bits(bits, d)
+        aa, dd, _ = eval_bits(cand, d)
+        ga, gd, _ = eval_bits(bits, d)
         if lex_better(aa, dd, ga, gd):
             bits = cand
 
-    a, dist, score = v8.eval_bits(bits, d)
+    a, dist, score = eval_bits(bits, d)
     try:
         gap = float(model.getGap())
     except Exception:
@@ -226,6 +349,7 @@ def warm_scip(
         solving_time_s = float(model.getSolvingTime())
     except Exception:
         solving_time_s = math.nan
+
     status = str(model.getStatus())
     return {
         "bits": bits,
@@ -240,7 +364,11 @@ def warm_scip(
         "build_ms": build_ms,
         "warm_start_ms": warm_ms,
         "optimize_ms": optimize_ms,
-        "scip_reported_solving_ms": 1000.0 * solving_time_s if math.isfinite(solving_time_s) else math.nan,
+        "scip_reported_solving_ms": (
+            1000.0 * solving_time_s
+            if math.isfinite(solving_time_s)
+            else math.nan
+        ),
         "wall_ms": build_ms + warm_ms + optimize_ms,
     }
 
@@ -302,7 +430,7 @@ class WarmGroupSoftSpin:
 
     def __init__(
         self,
-        d: v8.PoolData,
+        d: ProblemData,
         nr: int,
         no: int,
         device: str = "cpu",
@@ -480,7 +608,7 @@ class WarmGroupSoftSpin:
         uu = 0.5 * (1.0 + torch.tanh(3.0 * (2.0 * u - 1.0)) / math.tanh(3.0))
         pumps = cfg.pump_start + (cfg.pump_end - cfg.pump_start) * uu
 
-        start_a, start_d, _ = v8.eval_bits(warm_start, self.d)
+        start_a, start_d, _ = eval_bits(warm_start, self.d)
         best_bits = warm_start.copy()
         best_a, best_d = start_a, start_d
         best_step = 0
@@ -533,7 +661,7 @@ class WarmGroupSoftSpin:
 # -----------------------------------------------------------------------------
 
 
-def dense_conflict_matrix(d: v8.PoolData, nr: int, no: int) -> np.ndarray:
+def dense_conflict_matrix(d: ProblemData, nr: int, no: int) -> np.ndarray:
     m = len(d.rider)
     A = np.zeros((m, m), dtype=np.float64)
     rider_groups: list[list[int]] = [[] for _ in range(nr)]
@@ -553,53 +681,90 @@ def dense_conflict_matrix(d: v8.PoolData, nr: int, no: int) -> np.ndarray:
 
 
 def validate_dense_implicit(
-    inst: Any,
-    pool: CandidatePool,
-    d: v8.PoolData,
+    d: ProblemData,
     device: str,
     seed: int,
     power_iters: int,
 ) -> dict[str, Any]:
-    m = len(pool.candidates)
-    A = dense_conflict_matrix(d, inst.num_riders, inst.num_orders)
+    m = d.num_candidates
+    A = dense_conflict_matrix(d, d.num_riders, d.num_orders)
     deg = A.sum(axis=1)
     J = -0.25 * A
     h = d.reward.astype(np.float64) / 2.0 - deg / 4.0
     eig = np.linalg.eigvalsh(J) if m else np.zeros(0)
     exact_spec = float(np.max(np.abs(eig))) if m else 0.0
-    exact_scale = max(exact_spec, float(np.max(np.abs(h))) if m else 0.0, 1e-12)
+    exact_scale = max(
+        exact_spec,
+        float(np.max(np.abs(h))) if m else 0.0,
+        1e-12,
+    )
 
     soft = WarmGroupSoftSpin(
-        d, inst.num_riders, inst.num_orders, device,
-        normalization="spectral_power", power_iters=power_iters, power_seed=seed,
+        d,
+        d.num_riders,
+        d.num_orders,
+        device,
+        normalization="spectral_power",
+        power_iters=power_iters,
+        power_seed=seed,
     )
-    degree_err = float(np.max(np.abs(soft.degree_np - deg))) if m else 0.0
+    degree_err = (
+        float(np.max(np.abs(soft.degree_np - deg)))
+        if m
+        else 0.0
+    )
 
     rng = np.random.default_rng(seed)
     x_np = rng.normal(size=(4, m)).astype(np.float32)
     x_t = torch.as_tensor(x_np, device=soft.device)
-    implicit = soft.raw_field(x_t).detach().cpu().numpy().astype(np.float64)
+    implicit = (
+        soft.raw_field(x_t)
+        .detach()
+        .cpu()
+        .numpy()
+        .astype(np.float64)
+    )
     dense = x_np.astype(np.float64) @ J + h[None, :]
-    field_err = float(np.max(np.abs(implicit - dense))) if m else 0.0
+    field_err = (
+        float(np.max(np.abs(implicit - dense)))
+        if m
+        else 0.0
+    )
 
-    # Literal QUBO/Ising equivalence check on random bit strings.
-    # Qs is the symmetrized QUBO matrix: diag=-reward, offdiag=A/2.
     Qs = 0.5 * A
     np.fill_diagonal(Qs, -d.reward.astype(np.float64))
     J2 = -0.5 * Qs
     np.fill_diagonal(J2, 0.0)
     h2 = -0.5 * Qs.sum(axis=1)
-    offset = float(0.25 * Qs.sum() + 0.25 * np.trace(Qs))
+    offset = float(
+        0.25 * Qs.sum()
+        + 0.25 * np.trace(Qs)
+    )
     energy_err = 0.0
     for _ in range(16):
-        b = rng.integers(0, 2, size=m, dtype=np.int8).astype(np.float64)
+        b = rng.integers(
+            0, 2, size=m, dtype=np.int8
+        ).astype(np.float64)
         s = 2.0 * b - 1.0
         q = float(b @ Qs @ b)
-        ie = float(-0.5 * s @ J2 @ s - h2 @ s + offset)
-        energy_err = max(energy_err, abs(q - ie))
+        ie = float(
+            -0.5 * s @ J2 @ s
+            - h2 @ s
+            + offset
+        )
+        energy_err = max(
+            energy_err,
+            abs(q - ie),
+        )
 
-    rel_spec_err = abs(soft.spectral_j_estimate - exact_spec) / max(exact_spec, 1e-12)
-    rel_scale_err = abs(soft.scale - exact_scale) / max(exact_scale, 1e-12)
+    rel_spec_err = (
+        abs(soft.spectral_j_estimate - exact_spec)
+        / max(exact_spec, 1e-12)
+    )
+    rel_scale_err = (
+        abs(soft.scale - exact_scale)
+        / max(exact_scale, 1e-12)
+    )
     passed = (
         degree_err <= 1e-9
         and field_err <= 2e-5
@@ -637,7 +802,7 @@ def _swap_rows(arr: np.ndarray, mask: np.ndarray, j: int) -> None:
 def run_sparse_pt_diagnostics(
     *,
     start: np.ndarray,
-    d: v8.PoolData,
+    d: ProblemData,
     nr: int,
     no: int,
     tmin: float,
@@ -653,8 +818,8 @@ def run_sparse_pt_diagnostics(
     temps = np.geomspace(max(tmin, 1e-12), max(tmax, tmin * 1.0001), ntemps)
     beta = 1.0 / temps
     states = np.broadcast_to(start, (ensembles, ntemps, m)).copy().astype(np.int8)
-    occ = v8.replicate_occ(v8.start_occupancy(start, d, nr, no), (ensembles, ntemps))
-    a0, d0, _ = v8.eval_bits(start, d)
+    occ = replicate_occ(start_occupancy(start, d, nr, no), (ensembles, ntemps))
+    a0, d0, _ = eval_bits(start, d)
     assigned = np.full((ensembles, ntemps), a0, dtype=np.int32)
     dist = np.full((ensembles, ntemps), d0, dtype=np.float64)
     e0 = -float(start @ d.reward)
@@ -688,7 +853,7 @@ def run_sparse_pt_diagnostics(
     for sw in range(sweeps):
         for i in rng.permutation(m):
             b = states[:, :, i].astype(np.int16)
-            nc = v8.neighbor_count(b, occ, d, int(i)).astype(np.float64)
+            nc = neighbor_count(b, occ, d, int(i)).astype(np.float64)
             delta = (1 - 2 * b) * (-float(d.reward[i]) + nc)
             acc = delta <= 0.0
             up = ~acc
@@ -701,7 +866,7 @@ def run_sparse_pt_diagnostics(
             accepted_by_temp += np.sum(acc, axis=0).astype(np.int64)
             if np.any(dx):
                 states[:, :, i] = (states[:, :, i].astype(np.int16) + dx).astype(np.int8)
-                v8.apply_flip_update(occ, d, int(i), dx)
+                apply_flip_update(occ, d, int(i), dx)
                 assigned += dx * int(d.count[i])
                 dist += dx * float(d.distance[i])
                 energy += np.where(acc, delta, 0.0)
@@ -742,7 +907,7 @@ def run_sparse_pt_diagnostics(
                 phase[wid] = 2
 
         completed = sweep_no
-        feas = v8.feasible_mask(occ)
+        feas = feasible_mask(occ)
         er, et = np.where(feas)
         for ee, tt in zip(er.tolist(), et.tolist()):
             aa, dd = int(assigned[ee, tt]), float(dist[ee, tt])
@@ -846,12 +1011,56 @@ def aggregate_scale(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # -----------------------------------------------------------------------------
 
 
+def _parse_map(s: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in s.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        k, val = item.split("=", 1)
+        out[k.strip()] = val.strip()
+    return out
+
+
+def _discover_public_sets(prefix: str) -> dict[str, str]:
+    root = REPO / "instances" / "raw"
+    out: dict[str, str] = {}
+    if not root.exists():
+        return out
+    for p in sorted(root.iterdir()):
+        if p.is_dir() and p.name.startswith(prefix):
+            scale = p.name[len(prefix):]
+            if scale:
+                out[scale] = p.name
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--train-sets", required=True)
-    ap.add_argument("--test-sets", required=True)
-    ap.add_argument("--validation-set", required=True)
-    ap.add_argument("--output", default="experiments/results/raw_scaling_v10b")
+    ap.add_argument(
+        "--train-sets",
+        default="",
+        help=(
+            "Comma-separated scale=set map. If omitted, directories "
+            "instances/raw/raw_scaling_train_* are auto-discovered."
+        ),
+    )
+    ap.add_argument(
+        "--test-sets",
+        default="",
+        help=(
+            "Comma-separated scale=set map. If omitted, directories "
+            "instances/raw/raw_scaling_test_* are auto-discovered."
+        ),
+    )
+    ap.add_argument(
+        "--validation-set",
+        default="raw_scaling_validation",
+    )
+    ap.add_argument(
+        "--output",
+        default="raw_scaling/results",
+    )
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--validation-limit", type=int, default=2)
     ap.add_argument("--train-limit", type=int, default=3)
@@ -871,7 +1080,11 @@ def main() -> int:
     ap.add_argument("--pt-diagnostic-ensembles", type=int, default=2)
     ap.add_argument("--pt-diagnostic-max-wall", type=float, default=120.0)
 
-    ap.add_argument("--simcim-normalization", choices=["spectral_power", "row_sum", "none"], default="spectral_power")
+    ap.add_argument(
+        "--simcim-normalization",
+        choices=["spectral_power", "row_sum", "none"],
+        default="spectral_power",
+    )
     ap.add_argument("--simcim-power-iters", type=int, default=24)
     ap.add_argument("--simcim-train-steps", type=int, default=250)
     ap.add_argument("--simcim-train-replicas", type=int, default=24)
@@ -884,43 +1097,62 @@ def main() -> int:
     outdir = Path(args.output)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    def parse_map(s: str) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for item in s.split(","):
-            k, val = item.split("=", 1)
-            out[k.strip()] = val.strip()
-        return out
-
-    train_map = parse_map(args.train_sets)
-    test_map = parse_map(args.test_sets)
+    train_map = (
+        _parse_map(args.train_sets)
+        if args.train_sets.strip()
+        else _discover_public_sets("raw_scaling_train_")
+    )
+    test_map = (
+        _parse_map(args.test_sets)
+        if args.test_sets.strip()
+        else _discover_public_sets("raw_scaling_test_")
+    )
+    if not train_map:
+        raise ValueError(
+            "No raw-scaling training sets found. Supply --train-sets "
+            "or create instances/raw/raw_scaling_train_<scale>/."
+        )
+    if not test_map:
+        raise ValueError(
+            "No raw-scaling test sets found. Supply --test-sets "
+            "or create instances/raw/raw_scaling_test_<scale>/."
+        )
     if set(train_map) != set(test_map):
-        raise ValueError("train/test scales must match")
+        raise ValueError(
+            "train/test scales must match; "
+            f"train={sorted(train_map)}, test={sorted(test_map)}"
+        )
 
-    # ------------------------------------------------------------------
-    # A. Validate exact implicit Ising field before using large instances.
-    # ------------------------------------------------------------------
     validation_rows: list[dict[str, Any]] = []
     print("\n=== DENSE vs IMPLICIT VALIDATION ===", flush=True)
-    for ii, inst in enumerate(load_instance_set(args.validation_set)[: args.validation_limit]):
-        pool = CandidatePool(inst)
-        d = v8.pool_data(inst, pool)
+    validation = load_problem_set(args.validation_set)[: args.validation_limit]
+    for ii, d in enumerate(validation):
         row = validate_dense_implicit(
-            inst, pool, d, args.device,
+            d,
+            args.device,
             seed=args.seed + ii,
             power_iters=args.simcim_power_iters,
         )
-        row.update({"instance_index": ii, "instance_id": iid(inst, ii)})
+        row.update(
+            {
+                "instance_index": int(d.source_index),
+                "instance_id": d.instance_id,
+            }
+        )
         validation_rows.append(row)
         print(
-            f"  {ii}: m={row['num_candidates']} field_err={row['field_max_abs_error']:.3e} "
-            f"spec_rel={row['spectral_relative_error']:.3e} passed={row['passed']}",
+            f"  {ii}: m={row['num_candidates']} "
+            f"field_err={row['field_max_abs_error']:.3e} "
+            f"spec_rel={row['spectral_relative_error']:.3e} "
+            f"passed={row['passed']}",
             flush=True,
         )
     write_csv(outdir / "validation_dense_implicit.csv", validation_rows)
     if not validation_rows or not all(bool(r["passed"]) for r in validation_rows):
         raise RuntimeError(
-            "Dense-vs-implicit validation failed. Refusing to run large-instance SimCIM. "
-            f"See {outdir/'validation_dense_implicit.csv'}"
+            "Dense-vs-implicit validation failed. Refusing to run "
+            "large-instance SimCIM. See "
+            f"{outdir/'validation_dense_implicit.csv'}"
         )
 
     tuning_rows: list[dict[str, Any]] = []
@@ -930,30 +1162,41 @@ def main() -> int:
     pt_diag_rows: list[dict[str, Any]] = []
 
     for si, scale in enumerate(train_map):
-        print(f"\n=== SCALE {scale}: warm SimCIM TRAINING ===", flush=True)
-        train = load_instance_set(train_map[scale])[: args.train_limit]
+        print(
+            f"\n=== SCALE {scale}: warm SimCIM TRAINING ===",
+            flush=True,
+        )
+        train = load_problem_set(train_map[scale])[: args.train_limit]
         train_probs = []
-        for ii, inst in enumerate(train):
-            pool = CandidatePool(inst)
-            d = v8.pool_data(inst, pool)
-            greedy = v8.greedy_pair_first(pool, d)
-            ga, gd, _ = v8.eval_bits(greedy, d)
-            ref = warm_scip(pool, d, greedy, args.reference_scip_seconds, args.seed + si * 10000 + ii)
+        for ii, d in enumerate(train):
+            greedy = greedy_pair_first(d)
+            ga, gd, _ = eval_bits(greedy, d)
+            ref = warm_scip(
+                d,
+                greedy,
+                args.reference_scip_seconds,
+                args.seed + si * 10000 + ii,
+            )
             ra, rd = ref["assigned"], ref["distance"]
             if lex_better(ga, gd, ra, rd):
                 ra, rd = ga, gd
             soft = WarmGroupSoftSpin(
-                d, inst.num_riders, inst.num_orders, args.device,
+                d,
+                d.num_riders,
+                d.num_orders,
+                args.device,
                 normalization=args.simcim_normalization,
                 power_iters=args.simcim_power_iters,
                 power_seed=args.seed + 1000 * si + ii,
             )
-            train_probs.append((inst, pool, d, greedy, ga, gd, ra, rd, soft))
+            train_probs.append(
+                (d, greedy, ga, gd, ra, rd, soft)
+            )
 
         cfg_scores: list[tuple[float, int]] = []
         for ci, cfg in enumerate(SOFT_GRID):
             scores: list[float] = []
-            for ii, (inst, pool, d, greedy, ga, gd, ra, rd, soft) in enumerate(train_probs):
+            for ii, (d, greedy, ga, gd, ra, rd, soft) in enumerate(train_probs):
                 z = soft.solve(
                     cfg,
                     warm_start=greedy,
@@ -962,83 +1205,118 @@ def main() -> int:
                     seed=args.seed + 100000 * si + 1000 * ci + ii,
                     checkpoint_count=args.simcim_checkpoints,
                 )
-                score = tuning_score(ga, gd, z["assigned"], z["distance"], ra, rd)
+                score = tuning_score(
+                    ga,
+                    gd,
+                    z["assigned"],
+                    z["distance"],
+                    ra,
+                    rd,
+                )
                 scores.append(score)
-                tuning_rows.append({
-                    "scale": scale,
-                    "config_id": ci,
-                    **asdict(cfg),
-                    "instance_index": ii,
-                    "num_candidates": len(pool.candidates),
-                    "greedy_assigned": ga,
-                    "greedy_distance": gd,
-                    "assigned": z["assigned"],
-                    "distance": z["distance"],
-                    "ref_assigned": ra,
-                    "ref_distance": rd,
-                    "refinement_fraction": refinement_fraction(ga, gd, z["assigned"], z["distance"], ra, rd),
-                    "tuning_score": score,
-                    "wall_ms": z["wall_ms"],
-                    "best_step": z["best_step"],
-                    "first_same_card_improvement_step": z["first_same_card_improvement_step"],
-                    "feasible_replica_rate": z["final_checkpoint_feasible_replica_rate"],
-                    "normalization_scale": z["normalization_scale"],
-                    "spectral_j_estimate": z["spectral_j_estimate"],
-                })
-            mean_score = float(np.mean(scores)) if scores else -math.inf
+                tuning_rows.append(
+                    {
+                        "scale": scale,
+                        "config_id": ci,
+                        **asdict(cfg),
+                        "instance_index": int(d.source_index),
+                        "instance_id": d.instance_id,
+                        "num_candidates": d.num_candidates,
+                        "greedy_assigned": ga,
+                        "greedy_distance": gd,
+                        "assigned": z["assigned"],
+                        "distance": z["distance"],
+                        "ref_assigned": ra,
+                        "ref_distance": rd,
+                        "refinement_fraction": refinement_fraction(
+                            ga,
+                            gd,
+                            z["assigned"],
+                            z["distance"],
+                            ra,
+                            rd,
+                        ),
+                        "tuning_score": score,
+                        "wall_ms": z["wall_ms"],
+                        "best_step": z["best_step"],
+                        "first_same_card_improvement_step": z[
+                            "first_same_card_improvement_step"
+                        ],
+                        "feasible_replica_rate": z[
+                            "final_checkpoint_feasible_replica_rate"
+                        ],
+                        "normalization_scale": z["normalization_scale"],
+                        "spectral_j_estimate": z["spectral_j_estimate"],
+                    }
+                )
+            mean_score = (
+                float(np.mean(scores))
+                if scores
+                else -math.inf
+            )
             cfg_scores.append((mean_score, ci))
-            print(f"  config {ci:02d}: mean tuning score={mean_score:.5f}", flush=True)
+            print(
+                f"  config {ci:02d}: "
+                f"mean tuning score={mean_score:.5f}",
+                flush=True,
+            )
             write_csv(outdir / "simcim_tuning.csv", tuning_rows)
 
         _, best_ci = max(cfg_scores)
         best_cfg = SOFT_GRID[best_ci]
-        selected[scale] = {"config_id": best_ci, **asdict(best_cfg)}
+        selected[scale] = {
+            "config_id": best_ci,
+            **asdict(best_cfg),
+        }
         write_json(outdir / "simcim_selected.json", selected)
-        print(f"Selected config {best_ci}: {best_cfg}", flush=True)
+        print(
+            f"Selected config {best_ci}: {best_cfg}",
+            flush=True,
+        )
 
-        # ------------------------------------------------------------------
-        # Held-out raw test instances.
-        # ------------------------------------------------------------------
-        print(f"=== SCALE {scale}: HELD-OUT RAW TEST ===", flush=True)
-        test = load_instance_set(test_map[scale])[: args.test_limit]
-        for ii, inst in enumerate(test):
-            tc = time.perf_counter()
-            pool = CandidatePool(inst)
-            candidate_ms = 1000.0 * (time.perf_counter() - tc)
-            d = v8.pool_data(inst, pool)
+        print(
+            f"=== SCALE {scale}: HELD-OUT RAW TEST ===",
+            flush=True,
+        )
+        test = load_problem_set(test_map[scale])[: args.test_limit]
+        for ii, d in enumerate(test):
             tg = time.perf_counter()
-            greedy = v8.greedy_pair_first(pool, d)
+            greedy = greedy_pair_first(d)
             greedy_ms = 1000.0 * (time.perf_counter() - tg)
-            ga, gd, _ = v8.eval_bits(greedy, d)
+            ga, gd, _ = eval_bits(greedy, d)
 
             ref = warm_scip(
-                pool, d, greedy, args.reference_scip_seconds,
+                d,
+                greedy,
+                args.reference_scip_seconds,
                 args.seed + 500000 + si * 10000 + ii,
             )
             ra, rd = ref["assigned"], ref["distance"]
             if lex_better(ga, gd, ra, rd):
                 ra, rd = ga, gd
 
-            inst_rows.append({
-                "scale": scale,
-                "instance_index": ii,
-                "instance_id": iid(inst, ii),
-                "num_riders": inst.num_riders,
-                "num_orders": inst.num_orders,
-                "num_candidates": len(pool.candidates),
-                "candidate_ms": candidate_ms,
-                "greedy_assigned": ga,
-                "greedy_distance": gd,
-                "greedy_ms": greedy_ms,
-                "reference_assigned": ra,
-                "reference_distance": rd,
-                "reference_scip_status": ref["status"],
-                "reference_scip_wall_ms": ref["wall_ms"],
-                "reference_scip_build_ms": ref["build_ms"],
-                "reference_scip_warm_start_ms": ref["warm_start_ms"],
-                "reference_scip_optimize_ms": ref["optimize_ms"],
-                "reference_scip_nodes": ref["nodes"],
-            })
+            inst_rows.append(
+                {
+                    "scale": scale,
+                    "instance_index": int(d.source_index),
+                    "instance_id": d.instance_id,
+                    "num_riders": d.num_riders,
+                    "num_orders": d.num_orders,
+                    "num_candidates": d.num_candidates,
+                    "candidate_generation_included": False,
+                    "greedy_assigned": ga,
+                    "greedy_distance": gd,
+                    "greedy_ms": greedy_ms,
+                    "reference_assigned": ra,
+                    "reference_distance": rd,
+                    "reference_scip_status": ref["status"],
+                    "reference_scip_wall_ms": ref["wall_ms"],
+                    "reference_scip_build_ms": ref["build_ms"],
+                    "reference_scip_warm_start_ms": ref["warm_start_ms"],
+                    "reference_scip_optimize_ms": ref["optimize_ms"],
+                    "reference_scip_nodes": ref["nodes"],
+                }
+            )
 
             def addrow(
                 solver: str,
@@ -1049,13 +1327,17 @@ def main() -> int:
                 extra: dict[str, Any] | None = None,
             ) -> None:
                 cardgap = ra - a
-                distgap = 100.0 * (dd - rd) / max(abs(rd), 1e-12) if a == ra else math.nan
+                distgap = (
+                    100.0 * (dd - rd) / max(abs(rd), 1e-12)
+                    if a == ra
+                    else math.nan
+                )
                 row: dict[str, Any] = {
                     "phase": "test",
                     "scale": scale,
-                    "instance_index": ii,
-                    "instance_id": iid(inst, ii),
-                    "num_candidates": len(pool.candidates),
+                    "instance_index": int(d.source_index),
+                    "instance_id": d.instance_id,
+                    "num_candidates": d.num_candidates,
                     "solver": solver,
                     "budget_label": str(budget),
                     "assigned": a,
@@ -1065,8 +1347,13 @@ def main() -> int:
                     "reference_distance": rd,
                     "cardinality_gap": cardgap,
                     "distance_gap_pct": distgap,
-                    "refinement_fraction": refinement_fraction(ga, gd, a, dd, ra, rd),
-                    "matches_reference": bool(cardgap == 0 and abs(dd - rd) <= 1e-8),
+                    "refinement_fraction": refinement_fraction(
+                        ga, gd, a, dd, ra, rd
+                    ),
+                    "matches_reference": bool(
+                        cardgap == 0
+                        and abs(dd - rd) <= 1e-8
+                    ),
                 }
                 if extra:
                     row.update(extra)
@@ -1074,8 +1361,11 @@ def main() -> int:
 
             addrow("greedy", "single", ga, gd, greedy_ms)
             addrow(
-                "warm_scip_reference", f"{args.reference_scip_seconds:g}s",
-                ref["assigned"], ref["distance"], ref["wall_ms"],
+                "warm_scip_reference",
+                f"{args.reference_scip_seconds:g}s",
+                ref["assigned"],
+                ref["distance"],
+                ref["wall_ms"],
                 {
                     "scip_status": ref["status"],
                     "scip_gap": ref["gap"],
@@ -1086,13 +1376,27 @@ def main() -> int:
                 },
             )
 
-            for dl in [float(x) for x in args.scip_deadlines.split(",") if x.strip()]:
+            for dl in [
+                float(x)
+                for x in args.scip_deadlines.split(",")
+                if x.strip()
+            ]:
                 z = warm_scip(
-                    pool, d, greedy, dl,
-                    args.seed + 600000 + si * 10000 + ii + int(dl * 1000),
+                    d,
+                    greedy,
+                    dl,
+                    args.seed
+                    + 600000
+                    + si * 10000
+                    + ii
+                    + int(dl * 1000),
                 )
                 addrow(
-                    "warm_scip", f"{dl:g}s", z["assigned"], z["distance"], z["wall_ms"],
+                    "warm_scip",
+                    f"{dl:g}s",
+                    z["assigned"],
+                    z["distance"],
+                    z["wall_ms"],
                     {
                         "scip_status": z["status"],
                         "scip_gap": z["gap"],
@@ -1104,123 +1408,203 @@ def main() -> int:
                 )
                 write_csv(outdir / "raw_runs.csv", raw_rows)
 
-            # Standard PT work curve on every test instance.
-            for sw in [int(x) for x in args.pt_sweeps.split(",") if x.strip()]:
+            for sw in [
+                int(x)
+                for x in args.pt_sweeps.split(",")
+                if x.strip()
+            ]:
                 z = run_sparse_pt_diagnostics(
                     start=greedy,
                     d=d,
-                    nr=inst.num_riders,
-                    no=inst.num_orders,
+                    nr=d.num_riders,
+                    no=d.num_orders,
                     tmin=args.pt_tmin,
                     tmax=args.pt_tmax,
                     ntemps=args.pt_ntemps,
                     ensembles=args.pt_ensembles,
                     sweeps=sw,
-                    seed=args.seed + 700000 + si * 10000 + ii * 100 + sw,
+                    seed=args.seed
+                    + 700000
+                    + si * 10000
+                    + ii * 100
+                    + sw,
                     max_wall_s=args.pt_max_wall,
                 )
                 addrow(
-                    "pt", f"{sw}sweeps", z["assigned"], z["distance"], z["wall_ms"],
+                    "pt",
+                    f"{sw}sweeps",
+                    z["assigned"],
+                    z["distance"],
+                    z["wall_ms"],
                     {
                         "pt_sweeps_completed": z["sweeps_completed"],
                         "pt_swap_rate": z["swap_rate"],
                         "pt_acceptance_rate": z["acceptance_rate"],
                         "pt_acceptance_cold": z["acceptance_cold"],
                         "pt_acceptance_hot": z["acceptance_hot"],
-                        "pt_first_improve_sweep": z["first_same_card_improvement_sweep"],
+                        "pt_first_improve_sweep": z[
+                            "first_same_card_improvement_sweep"
+                        ],
                         "pt_roundtrips_total": z["roundtrips_total"],
                     },
                 )
                 write_csv(outdir / "raw_runs.csv", raw_rows)
 
-            # Frozen warm-start SimCIM config on the entire raw candidate pool.
             soft = WarmGroupSoftSpin(
-                d, inst.num_riders, inst.num_orders, args.device,
+                d,
+                d.num_riders,
+                d.num_orders,
+                args.device,
                 normalization=args.simcim_normalization,
                 power_iters=args.simcim_power_iters,
-                power_seed=args.seed + 800000 + si * 10000 + ii,
+                power_seed=args.seed
+                + 800000
+                + si * 10000
+                + ii,
             )
-            for steps in [int(x) for x in args.simcim_step_budgets.split(",") if x.strip()]:
+            for steps in [
+                int(x)
+                for x in args.simcim_step_budgets.split(",")
+                if x.strip()
+            ]:
                 z = soft.solve(
                     best_cfg,
                     warm_start=greedy,
                     steps=steps,
                     replicas=args.simcim_replicas,
-                    seed=args.seed + 810000 + si * 10000 + ii * 100 + steps,
+                    seed=args.seed
+                    + 810000
+                    + si * 10000
+                    + ii * 100
+                    + steps,
                     checkpoint_count=args.simcim_checkpoints,
                 )
                 addrow(
-                    "simcim_warm", f"{steps}steps", z["assigned"], z["distance"], z["wall_ms"],
+                    "simcim_warm",
+                    f"{steps}steps",
+                    z["assigned"],
+                    z["distance"],
+                    z["wall_ms"],
                     {
                         "simcim_steps": steps,
                         "simcim_replicas": args.simcim_replicas,
                         "simcim_config_id": best_ci,
                         "simcim_best_step": z["best_step"],
-                        "simcim_first_improve_step": z["first_same_card_improvement_step"],
-                        "simcim_same_card_improved": z["same_card_improved"],
-                        "simcim_final_feasible_replica_rate": z["final_checkpoint_feasible_replica_rate"],
-                        "simcim_normalization_scale": z["normalization_scale"],
-                        "simcim_spectral_j_estimate": z["spectral_j_estimate"],
+                        "simcim_first_improve_step": z[
+                            "first_same_card_improvement_step"
+                        ],
+                        "simcim_same_card_improved": z[
+                            "same_card_improved"
+                        ],
+                        "simcim_final_feasible_replica_rate": z[
+                            "final_checkpoint_feasible_replica_rate"
+                        ],
+                        "simcim_normalization_scale": z[
+                            "normalization_scale"
+                        ],
+                        "simcim_spectral_j_estimate": z[
+                            "spectral_j_estimate"
+                        ],
                     },
                 )
                 write_csv(outdir / "raw_runs.csv", raw_rows)
 
-            # Deep PT ladder diagnostics on only a few representative instances.
             if ii < args.pt_diagnostic_limit:
-                for nt in [int(x) for x in args.pt_diagnostic_ntemps.split(",") if x.strip()]:
+                for nt in [
+                    int(x)
+                    for x in args.pt_diagnostic_ntemps.split(",")
+                    if x.strip()
+                ]:
                     z = run_sparse_pt_diagnostics(
                         start=greedy,
                         d=d,
-                        nr=inst.num_riders,
-                        no=inst.num_orders,
+                        nr=d.num_riders,
+                        no=d.num_orders,
                         tmin=args.pt_tmin,
                         tmax=args.pt_tmax,
                         ntemps=nt,
                         ensembles=args.pt_diagnostic_ensembles,
                         sweeps=args.pt_diagnostic_sweeps,
-                        seed=args.seed + 900000 + si * 10000 + ii * 100 + nt,
+                        seed=args.seed
+                        + 900000
+                        + si * 10000
+                        + ii * 100
+                        + nt,
                         max_wall_s=args.pt_diagnostic_max_wall,
                     )
-                    pt_diag_rows.append({
-                        "scale": scale,
-                        "instance_index": ii,
-                        "instance_id": iid(inst, ii),
-                        "num_candidates": len(pool.candidates),
-                        "greedy_assigned": ga,
-                        "greedy_distance": gd,
-                        "reference_assigned": ra,
-                        "reference_distance": rd,
-                        "ntemps": nt,
-                        "requested_sweeps": args.pt_diagnostic_sweeps,
-                        "sweeps_completed": z["sweeps_completed"],
-                        "ensembles": args.pt_diagnostic_ensembles,
-                        "tmin": args.pt_tmin,
-                        "tmax": args.pt_tmax,
-                        "assigned": z["assigned"],
-                        "distance": z["distance"],
-                        "refinement_fraction": refinement_fraction(ga, gd, z["assigned"], z["distance"], ra, rd),
-                        "wall_ms": z["wall_ms"],
-                        "acceptance_rate": z["acceptance_rate"],
-                        "acceptance_cold": z["acceptance_cold"],
-                        "acceptance_hot": z["acceptance_hot"],
-                        "swap_rate": z["swap_rate"],
-                        "swap_rate_min_edge": z["swap_rate_min_edge"],
-                        "swap_rate_median_edge": z["swap_rate_median_edge"],
-                        "swap_rate_max_edge": z["swap_rate_max_edge"],
-                        "roundtrips_total": z["roundtrips_total"],
-                        "walkers_with_roundtrip": z["walkers_with_roundtrip"],
-                        "roundtrip_fraction_walkers": z["roundtrip_fraction_walkers"],
-                        "median_roundtrip_sweeps": z["median_roundtrip_sweeps"],
-                        "min_roundtrip_sweeps": z["min_roundtrip_sweeps"],
-                        "first_same_card_improvement_sweep": z["first_same_card_improvement_sweep"],
-                        "acceptance_by_temp_json": z["acceptance_by_temp_json"],
-                        "swap_rate_by_edge_json": z["swap_rate_by_edge_json"],
-                    })
-                    write_csv(outdir / "pt_diagnostics.csv", pt_diag_rows)
+                    pt_diag_rows.append(
+                        {
+                            "scale": scale,
+                            "instance_index": int(d.source_index),
+                            "instance_id": d.instance_id,
+                            "num_candidates": d.num_candidates,
+                            "greedy_assigned": ga,
+                            "greedy_distance": gd,
+                            "reference_assigned": ra,
+                            "reference_distance": rd,
+                            "ntemps": nt,
+                            "requested_sweeps": args.pt_diagnostic_sweeps,
+                            "sweeps_completed": z["sweeps_completed"],
+                            "ensembles": args.pt_diagnostic_ensembles,
+                            "tmin": args.pt_tmin,
+                            "tmax": args.pt_tmax,
+                            "assigned": z["assigned"],
+                            "distance": z["distance"],
+                            "refinement_fraction": refinement_fraction(
+                                ga,
+                                gd,
+                                z["assigned"],
+                                z["distance"],
+                                ra,
+                                rd,
+                            ),
+                            "wall_ms": z["wall_ms"],
+                            "acceptance_rate": z["acceptance_rate"],
+                            "acceptance_cold": z["acceptance_cold"],
+                            "acceptance_hot": z["acceptance_hot"],
+                            "swap_rate": z["swap_rate"],
+                            "swap_rate_min_edge": z[
+                                "swap_rate_min_edge"
+                            ],
+                            "swap_rate_median_edge": z[
+                                "swap_rate_median_edge"
+                            ],
+                            "swap_rate_max_edge": z[
+                                "swap_rate_max_edge"
+                            ],
+                            "roundtrips_total": z["roundtrips_total"],
+                            "walkers_with_roundtrip": z[
+                                "walkers_with_roundtrip"
+                            ],
+                            "roundtrip_fraction_walkers": z[
+                                "roundtrip_fraction_walkers"
+                            ],
+                            "median_roundtrip_sweeps": z[
+                                "median_roundtrip_sweeps"
+                            ],
+                            "min_roundtrip_sweeps": z[
+                                "min_roundtrip_sweeps"
+                            ],
+                            "first_same_card_improvement_sweep": z[
+                                "first_same_card_improvement_sweep"
+                            ],
+                            "acceptance_by_temp_json": z[
+                                "acceptance_by_temp_json"
+                            ],
+                            "swap_rate_by_edge_json": z[
+                                "swap_rate_by_edge_json"
+                            ],
+                        }
+                    )
+                    write_csv(
+                        outdir / "pt_diagnostics.csv",
+                        pt_diag_rows,
+                    )
 
             write_csv(outdir / "instance_summary.csv", inst_rows)
             print(
-                f"  test {ii}: m={len(pool.candidates)} greedy=({ga},{gd:.3f}) "
+                f"  test {ii}: m={d.num_candidates} "
+                f"greedy=({ga},{gd:.3f}) "
                 f"ref=({ra},{rd:.3f})",
                 flush=True,
             )
@@ -1233,18 +1617,27 @@ def main() -> int:
     write_csv(outdir / "instance_summary.csv", inst_rows)
     scale_summary = aggregate_scale(raw_rows)
     write_csv(outdir / "scale_summary.csv", scale_summary)
-    write_json(outdir / "run_config.json", vars(args))
+
+    public_config = vars(args).copy()
+    public_config["resolved_train_sets"] = train_map
+    public_config["resolved_test_sets"] = test_map
+    public_config["candidate_generation_included"] = False
+    write_json(outdir / "run_config.json", public_config)
 
     summary = {
-        "validation_all_passed": bool(validation_rows and all(bool(r["passed"]) for r in validation_rows)),
+        "validation_all_passed": bool(
+            validation_rows
+            and all(bool(r["passed"]) for r in validation_rows)
+        ),
         "validation_cases": len(validation_rows),
         "scales": list(train_map.keys()),
         "selected_simcim_configs": selected,
         "n_test_rows": len(raw_rows),
         "n_pt_diagnostic_rows": len(pt_diag_rows),
+        "candidate_generation_included": False,
     }
     write_json(outdir / "summary.json", summary)
-    print(f"\nWrote V10b results to {outdir}", flush=True)
+    print(f"\nWrote raw-scaling results to {outdir}", flush=True)
     return 0
 
 

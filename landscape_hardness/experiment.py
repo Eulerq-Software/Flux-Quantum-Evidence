@@ -78,8 +78,8 @@ REPO = HERE.parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from experiments.instance_source import load_instance_set  # noqa: E402
-from solvers.candidate_pool import CandidatePool  # noqa: E402
+
+from common.problem_data import ProblemData, load_problem_set
 
 
 # -----------------------------------------------------------------------------
@@ -109,57 +109,11 @@ def write_json(path: Path, obj: Any) -> None:
     path.write_text(json.dumps(obj, indent=2, allow_nan=True), encoding="utf-8")
 
 
-def iid(inst: Any, idx: int) -> str:
-    for attr in ("instance_id", "id", "name"):
-        if hasattr(inst, attr) and getattr(inst, attr) is not None:
-            return str(getattr(inst, attr))
-    return f"instance_{idx:04d}"
-
-
 # -----------------------------------------------------------------------------
 # Candidate arrays and exact business/QUBO scaling
 # -----------------------------------------------------------------------------
 
-@dataclass
-class PoolData:
-    rider: np.ndarray
-    o1: np.ndarray
-    o2: np.ndarray
-    count: np.ndarray
-    distance: np.ndarray
-    M: float
-    raw_reward: np.ndarray
-    lam: float
-    reward: np.ndarray
-
-
-def pool_data(inst: Any, pool: CandidatePool) -> PoolData:
-    m = len(pool.candidates)
-    rider = np.empty(m, dtype=np.int32)
-    o1 = np.empty(m, dtype=np.int32)
-    o2 = np.full(m, -1, dtype=np.int32)
-    count = np.empty(m, dtype=np.int8)
-    dist = np.empty(m, dtype=np.float64)
-
-    for i, c in enumerate(pool.candidates):
-        rider[i] = int(c.rider_idx)
-        orders = tuple(int(o) for o in c.order_indices)
-        count[i] = len(orders)
-        o1[i] = orders[0]
-        if len(orders) == 2:
-            o2[i] = orders[1]
-        dist[i] = float(c.distance)
-
-    maxd = float(np.max(dist)) if m else 0.0
-    M = float(inst.num_orders * maxd + 1.0)
-    raw_reward = M * count.astype(np.float64) - dist
-    # Sufficient unique-conflict penalty: lambda > largest positive candidate reward.
-    lam = float(max(1.0, np.max(raw_reward) + 1.0)) if m else 1.0
-    reward = raw_reward / lam
-    return PoolData(rider, o1, o2, count, dist, M, raw_reward, lam, reward)
-
-
-def eval_bits(bits: np.ndarray, d: PoolData) -> tuple[int, float, float]:
+def eval_bits(bits: np.ndarray, d: ProblemData) -> tuple[int, float, float]:
     b = np.asarray(bits, dtype=np.int8)
     assigned = int(b @ d.count.astype(np.int32))
     distance = float(b @ d.distance)
@@ -167,8 +121,8 @@ def eval_bits(bits: np.ndarray, d: PoolData) -> tuple[int, float, float]:
     return assigned, distance, business
 
 
-def greedy_pair_first(pool: CandidatePool, d: PoolData) -> np.ndarray:
-    m = len(pool.candidates)
+def greedy_pair_first(d: ProblemData) -> np.ndarray:
+    m = d.num_candidates
     out = np.zeros(m, dtype=np.int8)
     used_riders: set[int] = set()
     used_orders: set[int] = set()
@@ -194,20 +148,27 @@ def greedy_pair_first(pool: CandidatePool, d: PoolData) -> np.ndarray:
 # Full SCIP
 # -----------------------------------------------------------------------------
 
-def run_scip(inst: Any, pool: CandidatePool, d: PoolData, limit_s: float, seed: int) -> dict[str, Any]:
+def run_scip(
+    d: ProblemData,
+    limit_s: float,
+    seed: int,
+) -> dict[str, Any]:
     t0 = time.perf_counter()
-    model = Model("full_flux_large_v7")
+    model = Model("flux_candidate_selection")
     model.hideOutput()
     try:
         model.setIntParam("randomization/randomseedshift", int(seed) % 2147483647)
     except Exception:
         pass
-    x = [model.addVar(vtype="B", name=f"x_{i}") for i in range(len(pool.candidates))]
-    for ids in pool.by_rider:
-        if ids:
+    x = [
+            model.addVar(vtype="B", name=f"x_{i}")
+            for i in range(d.num_candidates)
+        ]
+    for ids in d.by_rider:
+        if len(ids) > 0:
             model.addCons(quicksum(x[int(i)] for i in ids) <= 1)
-    for ids in pool.by_order:
-        if ids:
+    for ids in d.by_order:
+        if len(ids) > 0:
             model.addCons(quicksum(x[int(i)] for i in ids) <= 1)
     model.setObjective(
         quicksum(float(d.raw_reward[i]) * x[i] for i in range(len(x))), "maximize"
@@ -259,7 +220,7 @@ class Occ:
     order_pair: np.ndarray
 
 
-def start_occupancy(bits: np.ndarray, d: PoolData, nr: int, no: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def start_occupancy(bits: np.ndarray, d: ProblemData, nr: int, no: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     ro = np.zeros(nr, dtype=np.int16)
     oo = np.zeros(no, dtype=np.int16)
     r_o = np.zeros((nr, no), dtype=np.int16)
@@ -284,7 +245,7 @@ def replicate_occ(base: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray], s
     return Occ(rep(ro), rep(oo), rep(r_o), rep(op))
 
 
-def neighbor_count(states_i: np.ndarray, occ: Occ, d: PoolData, i: int) -> np.ndarray:
+def neighbor_count(states_i: np.ndarray, occ: Occ, d: ProblemData, i: int) -> np.ndarray:
     """Exact number of selected UNIQUE conflicting neighbors of candidate i.
 
     Uses inclusion-exclusion over the rider/order conflict sets; no adjacency
@@ -308,7 +269,7 @@ def neighbor_count(states_i: np.ndarray, occ: Occ, d: PoolData, i: int) -> np.nd
     return union - states_i
 
 
-def apply_flip_update(occ: Occ, d: PoolData, i: int, dx: np.ndarray) -> None:
+def apply_flip_update(occ: Occ, d: ProblemData, i: int, dx: np.ndarray) -> None:
     r, a, b = int(d.rider[i]), int(d.o1[i]), int(d.o2[i])
     occ.rider[..., r] += dx
     occ.order[..., a] += dx
@@ -325,7 +286,7 @@ def feasible_mask(occ: Occ) -> np.ndarray:
 
 
 def run_sparse_sa(
-    *, start: np.ndarray, d: PoolData, nr: int, no: int,
+    *, start: np.ndarray, d: ProblemData, nr: int, no: int,
     temperature: float, runs: int, sweeps: int, seed: int, max_wall_s: float,
 ) -> dict[str, Any]:
     rng = np.random.default_rng(seed)
@@ -402,7 +363,7 @@ def _swap_rows(arr: np.ndarray, eidx: np.ndarray, j: int) -> None:
 
 
 def run_sparse_pt(
-    *, start: np.ndarray, d: PoolData, nr: int, no: int,
+    *, start: np.ndarray, d: ProblemData, nr: int, no: int,
     tmin: float, tmax: float, ntemps: int, ensembles: int,
     sweeps: int, seed: int, max_wall_s: float,
 ) -> dict[str, Any]:
@@ -500,18 +461,19 @@ def run_sparse_pt(
 # -----------------------------------------------------------------------------
 
 def nearest_better_milp(
-    *, pool: CandidatePool, d: PoolData, start: np.ndarray,
+    *,
+    d: ProblemData, start: np.ndarray,
     scip_assigned: int, scip_distance: float, time_limit_s: float,
 ) -> dict[str, Any]:
     start_a, start_d, _ = eval_bits(start, d)
     model = Model("nearest_better_full")
     model.hideOutput()
     x = [model.addVar(vtype="B", name=f"x_{i}") for i in range(len(start))]
-    for ids in pool.by_rider:
-        if ids:
+    for ids in d.by_rider:
+        if len(ids) > 0:
             model.addCons(quicksum(x[int(i)] for i in ids) <= 1)
-    for ids in pool.by_order:
-        if ids:
+    for ids in d.by_order:
+        if len(ids) > 0:
             model.addCons(quicksum(x[int(i)] for i in ids) <= 1)
 
     assigned_expr = quicksum(float(d.count[i]) * x[i] for i in range(len(x)))
@@ -569,7 +531,7 @@ def nearest_better_milp(
 # Controlled subcube: exact barrier + coherent transverse-field test
 # -----------------------------------------------------------------------------
 
-def conflict(i: int, j: int, d: PoolData) -> bool:
+def conflict(i: int, j: int, d: ProblemData) -> bool:
     if int(d.rider[i]) == int(d.rider[j]):
         return True
     ai = {int(d.o1[i])}
@@ -593,7 +555,7 @@ def bit_index(bits: np.ndarray) -> int:
     return idx
 
 
-def enumerate_controlled(start: np.ndarray, target: np.ndarray, d: PoolData, nr: int, no: int) -> dict[str, Any]:
+def enumerate_controlled(start: np.ndarray, target: np.ndarray, d: ProblemData, nr: int, no: int) -> dict[str, Any]:
     active = np.flatnonzero(start != target).astype(np.int32)
     k = len(active)
     if k > 20:
@@ -728,14 +690,23 @@ def reverse_quantum(cube: dict[str, Any], smin: float, total_time: float, steps:
 
 
 # -----------------------------------------------------------------------------
-# V8 additions: quality-fraction geometry, controlled thermal, coherent holds
+# Quality-fraction geometry, controlled thermal, and coherent holds
 # -----------------------------------------------------------------------------
 
-def overlap_stats(pool: CandidatePool, d: PoolData) -> dict[str, float]:
-    """Cheap structural proxies without constructing the full conflict graph."""
-    m = max(1, len(pool.candidates))
-    rb = np.asarray([len(x) for x in pool.by_rider], dtype=np.float64)
-    ob = np.asarray([len(x) for x in pool.by_order], dtype=np.float64)
+def overlap_stats(
+    d: ProblemData,
+) -> dict[str, float]:
+    m = max(1, d.num_candidates)
+
+    rb = np.asarray(
+        [len(x) for x in d.by_rider],
+        dtype=np.float64,
+    )
+
+    ob = np.asarray(
+        [len(x) for x in d.by_order],
+        dtype=np.float64,
+    )
     pair_proxy = float(np.sum(rb * (rb - 1.0) / 2.0) + np.sum(ob * (ob - 1.0) / 2.0))
     denom = m * (m - 1.0) / 2.0
     return {
@@ -753,7 +724,7 @@ def overlap_stats(pool: CandidatePool, d: PoolData) -> dict[str, float]:
 
 
 def nearest_quality_fraction_milp(
-    *, pool: CandidatePool, d: PoolData, start: np.ndarray,
+    *, d: ProblemData, start: np.ndarray,
     optimum_assigned: int, optimum_distance: float, fraction: float,
     time_limit_s: float, seed: int,
 ) -> dict[str, Any]:
@@ -770,11 +741,11 @@ def nearest_quality_fraction_milp(
     except Exception:
         pass
     x = [model.addVar(vtype="B", name=f"x_{i}") for i in range(len(start))]
-    for ids in pool.by_rider:
-        if ids:
+    for ids in d.by_rider:
+        if len(ids) > 0:
             model.addCons(quicksum(x[int(i)] for i in ids) <= 1)
-    for ids in pool.by_order:
-        if ids:
+    for ids in d.by_order:
+        if len(ids) > 0:
             model.addCons(quicksum(x[int(i)] for i in ids) <= 1)
     assigned_expr = quicksum(float(d.count[i]) * x[i] for i in range(len(x)))
     distance_expr = quicksum(float(d.distance[i]) * x[i] for i in range(len(x)))
@@ -1038,8 +1009,14 @@ def core_local_minima_stats(cube: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sets", default="full_q_15x40_v8,full_q_20x50_v8")
-    ap.add_argument("--output", default="experiments/results/quantum_hardness_hunt_v8")
+    ap.add_argument(
+            "--sets",
+            default="landscape_15x40,landscape_20x50",
+        )
+    ap.add_argument(
+        "--output",
+        default="landscape_hardness/results",
+    )
     ap.add_argument("--deadline-minutes", type=float, default=82.0)
     ap.add_argument("--screen-budget-minutes", type=float, default=18.0)
     ap.add_argument("--scip-seconds", type=float, default=6.0)
@@ -1081,10 +1058,13 @@ def main() -> int:
     candidate_rows: list[dict[str, Any]] = []
 
     set_names = [s.strip() for s in args.sets.split(",") if s.strip()]
-    loaded: dict[str, list[Any]] = {s: load_instance_set(s) for s in set_names}
+    loaded: dict[str, list[ProblemData]] = {
+        s: load_problem_set(s)
+        for s in set_names
+    }
 
     print("=" * 104)
-    print("EulerQ V8 — adaptive classical-hardness / quantum-mechanism hunt")
+    print("EulerQ — Flux landscape hardness analysis")
     print(f"Internal deadline: {args.deadline_minutes:.1f} min | screen budget: {args.screen_budget_minutes:.1f} min")
     print("Full 2-order Flux only; no dense global QUBO; all files checkpoint after every result.")
     print("=" * 104)
@@ -1094,19 +1074,32 @@ def main() -> int:
     # ------------------------------------------------------------------
     for set_name in set_names:
         print(f"\nSCREEN {set_name}: {len(loaded[set_name])} instances")
-        for idx, inst in enumerate(loaded[set_name]):
-            if time.perf_counter() >= screen_deadline or not can_start(args.scip_seconds + 5):
-                print("Screen budget reached; preserving time for deep analysis.")
+        for idx, d in enumerate(loaded[set_name]):
+            if (
+                time.perf_counter() >= screen_deadline
+                or not can_start(args.scip_seconds + 5)
+            ):
+                print(
+                    "Screen budget reached; preserving time "
+                    "for deep analysis."
+                )
                 break
-            tc = time.perf_counter()
-            pool = CandidatePool(inst, capacity_limit=2)
-            cand_ms = 1000.0 * (time.perf_counter() - tc)
-            d = pool_data(inst, pool)
+
             tg = time.perf_counter()
-            gbits = greedy_pair_first(pool, d)
-            greedy_ms = 1000.0 * (time.perf_counter() - tg)
+            gbits = greedy_pair_first(d)
+            greedy_ms = 1000.0 * (
+                time.perf_counter() - tg
+            )
+
             ga, gd, _ = eval_bits(gbits, d)
-            sc = run_scip(inst, pool, d, args.scip_seconds, args.seed + 1000 * len(screen_rows) + idx)
+
+            sc = run_scip(
+                d,
+                args.scip_seconds,
+                args.seed
+                + 1000 * len(screen_rows)
+                + idx,
+            )
             same = sc["assigned"] == ga
             dgain = float(gd - sc["distance"]) if same and sc["assigned"] >= 0 else math.nan
             gap_pct = 100.0 * dgain / max(abs(sc["distance"]), 1e-12) if same else math.nan
@@ -1114,7 +1107,7 @@ def main() -> int:
             e_s = -float(sc["bits"] @ d.reward) if sc["assigned"] >= 0 else math.nan
             egain = float(e_g - e_s) if np.isfinite(e_s) else math.nan
             kopt = int(np.sum(gbits != sc["bits"])) if sc["assigned"] >= 0 else -1
-            st = overlap_stats(pool, d)
+            st = overlap_stats(d)
             # A ranking score, not a hardness claim: prefer real greedy gaps,
             # wider rearrangements, more B&B work, and slower exact solves.
             hardness_score = (
@@ -1124,11 +1117,11 @@ def main() -> int:
                 + 0.04 * max(0, kopt)
             )
             row = {
-                "set_name": set_name, "instance_index": idx, "instance_id": iid(inst, idx),
-                "num_riders": int(inst.num_riders), "num_orders": int(inst.num_orders),
-                "num_candidates": len(pool.candidates),
+                "set_name": set_name, "instance_index": idx, "instance_id": d.instance_id,
+                "num_riders": int(d.num_riders), "num_orders": int(d.num_orders),
+                "num_candidates": d.num_candidates,
                 "single_candidates": int(np.sum(d.count == 1)), "pair_candidates": int(np.sum(d.count == 2)),
-                "candidate_ms": cand_ms, "greedy_ms": greedy_ms,
+                "greedy_ms": greedy_ms,
                 "greedy_assigned": ga, "greedy_distance": gd,
                 "scip_status": sc["status"], "scip_optimal": sc["optimal"], "scip_gap": sc["gap"],
                 "scip_nodes": sc["nodes"], "scip_assigned": sc["assigned"], "scip_distance": sc["distance"],
@@ -1142,7 +1135,7 @@ def main() -> int:
             screen_rows.append(row)
             write_csv(out / "screening.csv", screen_rows)
             print(
-                f"[{set_name} {idx:02d}] m={len(pool.candidates):6d} "
+                f"[{set_name} {idx:02d}] m={d.num_candidates:6d} "
                 f"G={ga:2d}/{gd:8.2f} S={sc['assigned']:2d}/{sc['distance']:8.2f} "
                 f"dD={dgain:7.3f} k={kopt:3d} nodes={sc['nodes']:6d} SCIP={sc['solver_ms']:7.1f}ms"
             )
@@ -1170,13 +1163,11 @@ def main() -> int:
     for sel_rank, (set_name, idx) in enumerate(selected):
         if not can_start(60):
             break
-        inst = loaded[set_name][idx]
-        pool = CandidatePool(inst, capacity_limit=2)
-        d = pool_data(inst, pool)
-        gbits = greedy_pair_first(pool, d)
+        d = loaded[set_name][idx]
+        gbits = greedy_pair_first(d)
         ga, gd, _ = eval_bits(gbits, d)
         # Recompute SCIP with the normal screen limit so the deep record is self-contained.
-        sc = run_scip(inst, pool, d, args.scip_seconds, args.seed + 50000 + sel_rank)
+        sc = run_scip(d, args.scip_seconds, args.seed + 50000 + sel_rank)
         if sc["assigned"] != ga or not np.isfinite(sc["distance"]) or gd <= sc["distance"] + 1e-8:
             continue
         full_gain_d = float(gd - sc["distance"])
@@ -1188,14 +1179,14 @@ def main() -> int:
             if not can_start(args.nearest_seconds + 10):
                 break
             nb = nearest_quality_fraction_milp(
-                pool=pool, d=d, start=gbits, optimum_assigned=int(sc["assigned"]),
+                d=d, start=gbits, optimum_assigned=int(sc["assigned"]),
                 optimum_distance=float(sc["distance"]), fraction=frac,
                 time_limit_s=min(args.nearest_seconds, max(2.0, left() - 20.0)),
                 seed=args.seed + 60000 + 100 * sel_rank + fi,
             )
             frac_results.append(nb)
             nearest_rows.append({
-                "set_name": set_name, "instance_index": idx, "instance_id": iid(inst, idx),
+                "set_name": set_name, "instance_index": idx, "instance_id": d.instance_id,
                 "num_candidates": len(gbits), "start_assigned": ga, "start_distance": gd,
                 "scip_distance": sc["distance"], "full_distance_gain": full_gain_d,
                 "scip_hamming": int(np.sum(gbits != sc["bits"])),
@@ -1220,13 +1211,13 @@ def main() -> int:
                 seed = args.seed + 70000 + 1000 * sel_rank + 20 * ci + rep
                 if typ == "sa":
                     rr = run_sparse_sa(
-                        start=gbits, d=d, nr=int(inst.num_riders), no=int(inst.num_orders),
+                        start=gbits, d=d, nr=int(d.num_riders), no=int(d.num_orders),
                         temperature=float(p1), runs=args.sa_runs, sweeps=args.sa_sweeps,
                         seed=seed, max_wall_s=min(args.thermal_max_wall, max(5.0, left() - 20.0)),
                     )
                 else:
                     rr = run_sparse_pt(
-                        start=gbits, d=d, nr=int(inst.num_riders), no=int(inst.num_orders),
+                        start=gbits, d=d, nr=int(d.num_riders), no=int(d.num_orders),
                         tmin=float(p1), tmax=float(p2), ntemps=int(p3), ensembles=args.pt_ensembles,
                         sweeps=args.pt_sweeps, seed=seed,
                         max_wall_s=min(args.thermal_max_wall, max(5.0, left() - 20.0)),
@@ -1236,7 +1227,7 @@ def main() -> int:
                     if int(rr["assigned"]) == ga else math.nan
                 )
                 thermal_rows.append({
-                    "set_name": set_name, "instance_index": idx, "instance_id": iid(inst, idx),
+                    "set_name": set_name, "instance_index": idx, "instance_id": d.instance_id,
                     "solver": tag, "rep": rep, "num_candidates": len(gbits),
                     "start_assigned": ga, "start_distance": gd, "scip_distance": sc["distance"],
                     "full_distance_gain": full_gain_d, "energy_gain_norm": energy_gain,
@@ -1255,13 +1246,13 @@ def main() -> int:
             # because the 90% target is a little wider than the statevector cap.
             quantum_fit = [x for x in eligible_core if int(x["k_min"]) <= args.quantum_max_k]
             target_nb = sorted(quantum_fit if quantum_fit else eligible_core, key=lambda x: float(x["fraction"]), reverse=True)[0]
-            cube = enumerate_controlled(gbits, target_nb["bits"], d, int(inst.num_riders), int(inst.num_orders))
+            cube = enumerate_controlled(gbits, target_nb["bits"], d, int(d.num_riders), int(d.num_orders))
             barrier, topdeg = minimax_barrier(cube["energies"], cube["start_idx"], cube["target_idx"], cube["k"])
             cstats = core_local_minima_stats(cube)
             target_energy = float(cube["energies"][cube["target_idx"]])
             gain = float(cube["energies"][cube["start_idx"]] - target_energy)
             br = {
-                "set_name": set_name, "instance_index": idx, "instance_id": iid(inst, idx),
+                "set_name": set_name, "instance_index": idx, "instance_id": d.instance_id,
                 "quality_fraction": target_nb["fraction"], "k": cube["k"],
                 "num_states": len(cube["energies"]), "num_feasible_states": int(np.sum(cube["feasible"])),
                 "start_energy": float(cube["energies"][cube["start_idx"]]), "target_energy": target_energy,
@@ -1273,7 +1264,7 @@ def main() -> int:
             write_csv(out / "controlled_barriers.csv", barrier_rows)
             print(f"  CORE f={target_nb['fraction']:.1f} k={cube['k']} B={barrier:.6g} B/gain={br['barrier_over_target_gain']:.1f}")
             core_cache.append({
-                "set_name": set_name, "idx": idx, "inst": inst, "pool": pool, "d": d,
+                "set_name": set_name, "idx": idx, "d": d,
                 "gbits": gbits, "sc": sc, "cube": cube, "barrier": barrier,
                 "target_energy": target_energy, "quality_fraction": target_nb["fraction"],
                 "full_gain_d": full_gain_d, "energy_gain": energy_gain,
@@ -1291,7 +1282,7 @@ def main() -> int:
                     ("pt_cal", controlled_pt(cube, target_energy=target_energy, tmin=c_tmin, tmax=c_tmax, ntemps=16, ensembles=128, sweeps=sweeps, seed=args.seed+82000+sel_rank*100+sweeps)),
                 ]:
                     controlled_classical_rows.append({
-                        "set_name": set_name, "instance_index": idx, "instance_id": iid(inst, idx),
+                        "set_name": set_name, "instance_index": idx, "instance_id": d.instance_id,
                         "quality_fraction": target_nb["fraction"], "k": cube["k"],
                         "barrier_norm": barrier, "target_gain": gain, "variant": tag, **res,
                     })
@@ -1307,7 +1298,7 @@ def main() -> int:
                         steps = max(120, int(32 * tt))
                         qr = reverse_quantum_quality(cube, target_energy=target_energy, smin=smin, total_time=tt, steps=steps)
                         rowq = {
-                            "set_name": set_name, "instance_index": idx, "instance_id": iid(inst, idx),
+                            "set_name": set_name, "instance_index": idx, "instance_id": d.instance_id,
                             "quality_fraction": target_nb["fraction"], "k": cube["k"],
                             "barrier_norm": barrier, "target_gain": gain, **qr,
                         }
@@ -1326,7 +1317,7 @@ def main() -> int:
                             ramp_time=max(1.0, float(best_q["total_time"]) / 2.0), hold_time=float(tau), ramp_steps=80,
                         )
                         hold_rows.append({
-                            "set_name": set_name, "instance_index": idx, "instance_id": iid(inst, idx),
+                            "set_name": set_name, "instance_index": idx, "instance_id": d.instance_id,
                             "quality_fraction": target_nb["fraction"], "k": cube["k"],
                             "barrier_norm": barrier, "target_gain": gain, **hr,
                         })
@@ -1353,26 +1344,24 @@ def main() -> int:
     rep_counter = 0
     while can_start(args.thermal_max_wall + 25) and revisit:
         _, _, set_name, idx = revisit[rep_counter % len(revisit)]
-        inst = loaded[set_name][idx]
-        pool = CandidatePool(inst, capacity_limit=2)
-        d = pool_data(inst, pool)
-        gbits = greedy_pair_first(pool, d)
+        d = loaded[set_name][idx]
+        gbits = greedy_pair_first(d)
         ga, gd, _ = eval_bits(gbits, d)
-        sc = run_scip(inst, pool, d, min(args.scip_seconds, 4.0), args.seed + 90000 + rep_counter)
+        sc = run_scip(d, min(args.scip_seconds, 4.0), args.seed + 90000 + rep_counter)
         if sc["assigned"] != ga or gd <= sc["distance"] + 1e-8:
             rep_counter += 1
             continue
         full_gain_d = gd - sc["distance"]
         egain = float((-gbits @ d.reward) - (-sc["bits"] @ d.reward))
         rr = run_sparse_pt(
-            start=gbits, d=d, nr=int(inst.num_riders), no=int(inst.num_orders),
+            start=gbits, d=d, nr=int(d.num_riders), no=int(d.num_orders),
             tmin=max(1e-7, egain / 50.0), tmax=3.0, ntemps=28, ensembles=max(3, args.pt_ensembles),
             sweeps=max(32, args.pt_sweeps), seed=args.seed + 100000 + rep_counter,
             max_wall_s=min(args.thermal_max_wall, max(5.0, left() - 20.0)),
         )
         frac_ach = max(0.0, min(1.5, (gd - float(rr["distance"])) / max(full_gain_d, 1e-12))) if rr["assigned"] == ga else math.nan
         thermal_rows.append({
-            "set_name": set_name, "instance_index": idx, "instance_id": iid(inst, idx),
+            "set_name": set_name, "instance_index": idx, "instance_id": d.instance_id,
             "solver": "pt_revisit_wide28", "rep": rep_counter, "num_candidates": len(gbits),
             "start_assigned": ga, "start_distance": gd, "scip_distance": sc["distance"],
             "full_distance_gain": full_gain_d, "energy_gain_norm": egain,

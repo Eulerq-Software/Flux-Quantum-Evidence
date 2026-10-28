@@ -87,8 +87,7 @@ REPO = HERE.parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from experiments import eulerq_quantum_mechanism_v11b as v11  # noqa: E402
-from experiments import eulerq_quantum_evidence_v12 as v12  # noqa: E402
+from common import quantum_core as qc  # noqa: E402
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -118,7 +117,7 @@ def parse_floats(s: str) -> list[float]:
 
 def x_driver(k: int) -> sparse.csr_matrix:
     # v11 driver is already -sum X_i.
-    return v11.transverse_driver_sparse(k).tocsr()
+    return qc.transverse_driver_sparse(k).tocsr()
 
 
 def xy_exchange_driver(k: int, edges: list[tuple[int, int]]) -> sparse.csr_matrix:
@@ -216,7 +215,7 @@ def static_transfer_driver(
     cube: dict[str, Any], Hdriver: sparse.csr_matrix,
     *, s: float, driver_scale: float, hold_max: float, hold_points: int,
 ) -> dict[str, Any]:
-    problem, _ = v11.normalized_problem(cube)
+    problem, _ = qc.normalized_problem(cube)
     dim = len(problem)
     si, ti = int(cube['start_idx']), int(cube['target_idx'])
     feasible = np.asarray(cube['feasible'], dtype=bool)
@@ -318,80 +317,174 @@ def summarize(best_rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument('--v8-results', default='experiments/results/quantum_hardness_hunt_v8')
-    ap.add_argument('--v11-results', default='experiments/results/quantum_mechanism_v11b')
-    ap.add_argument('--out', default='experiments/results/structured_quantum_driver_v13')
-    ap.add_argument('--mode', choices=['quick','full'], default='quick')
-    ap.add_argument('--seed', type=int, default=131313)
-    ap.add_argument('--nearest-seconds', type=float, default=8.0)
+    ap.add_argument(
+        "--cases",
+        default="structured_exchange",
+        help=(
+            "Directory name under instances/local_subproblems/ "
+            "containing the exported V13 cases."
+        ),
+    )
+    ap.add_argument(
+        "--out",
+        default="structured_exchange/results",
+    )
+    ap.add_argument(
+        "--mode",
+        choices=["quick", "full"],
+        default="quick",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=131313,
+        help=(
+            "Seed used only for the randomized-edge control. "
+            "The local subproblems themselves are pre-exported."
+        ),
+    )
     args = ap.parse_args()
 
-    v8dir = Path(args.v8_results); v11dir = Path(args.v11_results); out = Path(args.out)
+    out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    cases = v12.reconstruct_cases(v8dir, v11dir, args.nearest_seconds, args.seed)
-    # Keep exact-statevector-safe natural cases only.
-    cases = [c for c in cases if int(c['cube']['k']) <= 12]
+    cases = qc.load_local_cases(args.cases)
+    # Keep exact-statevector-safe cases only, matching the original study.
+    cases = [
+        c
+        for c in cases
+        if int(c["cube"]["k"]) <= 12
+    ]
 
-    if args.mode == 'quick':
+    if args.mode == "quick":
         s_values = [0.30, 0.50, 0.70]
         driver_scales = [0.75, 1.5]
         hold_max, hold_points = 24.0, 81
     else:
-        s_values = [0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80]
-        driver_scales = [0.5, 0.75, 1.0, 1.5, 2.0]
+        s_values = [
+            0.20,
+            0.30,
+            0.40,
+            0.50,
+            0.60,
+            0.70,
+            0.80,
+        ]
+        driver_scales = [
+            0.5,
+            0.75,
+            1.0,
+            1.5,
+            2.0,
+        ]
         hold_max, hold_points = 40.0, 161
 
     rows: list[dict[str, Any]] = []
     best_rows: list[dict[str, Any]] = []
 
     for ci, c in enumerate(cases):
-        cube = c['cube']; k = int(cube['k'])
+        cube = c["cube"]
+        k = int(cube["k"])
         p_uniform = 1.0 / float(1 << k)
-        drivers = build_drivers(c, args.seed + 1000 * ci)
-        si, ti = int(cube['start_idx']), int(cube['target_idx'])
+        drivers = build_drivers(
+            c,
+            args.seed + 1000 * ci,
+        )
+        si = int(cube["start_idx"])
+        ti = int(cube["target_idx"])
 
-        print(f"[V13] case={c['case_id']} k={k} B/gain={c['geom']['barrier_over_gain']:.3g}", flush=True)
+        print(
+            f"[structured] case={c['case_id']} "
+            f"k={k} "
+            f"B/gain={c['geom']['barrier_over_gain']:.3g}",
+            flush=True,
+        )
+
         for dname, dobj in drivers.items():
-            edges = dobj['xy_edges']
-            gd = graph_distance(si, ti, k, dname, edges)
+            edges = dobj["xy_edges"]
+            gd = graph_distance(
+                si,
+                ti,
+                k,
+                dname,
+                edges,
+            )
             d_best: dict[str, Any] | None = None
+
             for s in s_values:
                 for g in driver_scales:
                     z = static_transfer_driver(
-                        cube, dobj['H'], s=s, driver_scale=g,
-                        hold_max=hold_max, hold_points=hold_points,
+                        cube,
+                        dobj["H"],
+                        s=s,
+                        driver_scale=g,
+                        hold_max=hold_max,
+                        hold_points=hold_points,
                     )
                     r = {
-                        'case_id': c['case_id'], 'set_name': c['set_name'],
-                        'instance_index': c['instance_index'], 'k': k,
-                        'barrier': c['geom']['barrier'], 'gain': c['geom']['gain'],
-                        'barrier_over_gain': c['geom']['barrier_over_gain'],
-                        'driver': dname, 'driver_raw_norm': dobj['raw_norm'],
-                        'n_xy_edges': len(edges), 'driver_graph_distance': gd,
-                        's': s, 'driver_scale': g,
-                        'p_uniform_target': p_uniform,
+                        "case_id": c["case_id"],
+                        "set_name": c["set_name"],
+                        "instance_index": c["instance_index"],
+                        "k": k,
+                        "barrier": c["geom"]["barrier"],
+                        "gain": c["geom"]["gain"],
+                        "barrier_over_gain": c["geom"][
+                            "barrier_over_gain"
+                        ],
+                        "driver": dname,
+                        "driver_raw_norm": dobj["raw_norm"],
+                        "n_xy_edges": len(edges),
+                        "driver_graph_distance": gd,
+                        "s": s,
+                        "driver_scale": g,
+                        "p_uniform_target": p_uniform,
                         **z,
                     }
-                    r['target_enrichment_vs_uniform'] = r['max_p_target'] / p_uniform
+                    r["target_enrichment_vs_uniform"] = (
+                        r["max_p_target"] / p_uniform
+                    )
                     rows.append(r)
-                    if d_best is None or float(r['max_p_target']) > float(d_best['max_p_target']):
+                    if (
+                        d_best is None
+                        or float(r["max_p_target"])
+                        > float(d_best["max_p_target"])
+                    ):
                         d_best = r.copy()
+
             assert d_best is not None
             best_rows.append(d_best)
 
-    write_csv(out / 'structured_driver_sweep.csv', rows)
-    write_csv(out / 'structured_driver_best.csv', best_rows)
-    summary = summarize(best_rows)
-    summary['mode'] = args.mode
-    summary['n_cases'] = len(cases)
-    summary['interpretation_guardrail'] = (
-        'Positive structured-driver results are mechanism evidence for problem-aware coherent exchange mixers; '
-        'they are not an end-to-end quantum speedup claim. The random-edge control tests whether Flux structure, '
-        'rather than simply adding two-qubit couplings, is responsible.'
+    write_csv(
+        out / "structured_driver_sweep.csv",
+        rows,
     )
-    write_json(out / 'committee_summary.json', summary)
-    print(json.dumps(summary, indent=2, allow_nan=True), flush=True)
+    write_csv(
+        out / "structured_driver_best.csv",
+        best_rows,
+    )
+
+    summary = summarize(best_rows)
+    summary["mode"] = args.mode
+    summary["n_cases"] = len(cases)
+    summary["interpretation_guardrail"] = (
+        "Positive structured-driver results are mechanism evidence "
+        "for problem-aware coherent exchange mixers; they are not "
+        "an end-to-end quantum speedup claim. The random-edge "
+        "control tests whether Flux structure, rather than simply "
+        "adding two-qubit couplings, is responsible."
+    )
+    write_json(
+        out / "committee_summary.json",
+        summary,
+    )
+    write_json(
+        out / "run_config.json",
+        vars(args),
+    )
+    print(
+        json.dumps(summary, indent=2, allow_nan=True),
+        flush=True,
+    )
 
 
 if __name__ == '__main__':

@@ -1,0 +1,50 @@
+{
+  "source_experiment": "quantum_evidence_v12_rawpt",
+  "source_screening": "experiments/results/raw_scaling_v10c/screening.csv",
+  "scales": [
+    "15x40",
+    "20x50"
+  ],
+  "source_sets": {
+    "15x40": "committee_test_15x40_v10",
+    "20x50": "committee_test_20x50_v10"
+  },
+  "selected_cases": [
+    {
+      "scale": "15x40",
+      "instance_id": "instance_0000",
+      "source_set": "committee_test_15x40_v10",
+      "source_index": 0,
+      "num_riders": 15,
+      "num_orders": 40,
+      "num_candidates": 8596,
+      "file": "instances/raw/quantum_mechanism_rawpt_15x40/instance_0000.npz",
+      "screen_instance_id": "instance_0000",
+      "distance_gain": 1.2920145689901972,
+      "reference_assigned": 30,
+      "reference_distance": 54.030243057097024,
+      "reference_optimize_ms": 2691.6225970053347,
+      "greedy_assigned": 30,
+      "greedy_distance": 55.32225762608722,
+      "available_distance_gain": 1.2920145689901972
+    },
+    {
+      "scale": "20x50",
+      "instance_id": "instance_0001",
+      "source_set": "committee_test_20x50_v10",
+      "source_index": 1,
+      "num_riders": 20,
+      "num_orders": 50,
+      "num_candidates": 21127,
+      "file": "instances/raw/quantum_mechanism_rawpt_20x50/instance_0001.npz",
+      "screen_instance_id": "instance_0001",
+      "distance_gain": 1.637623747857539,
+      "reference_assigned": 40,
+      "reference_distance": 61.118987762420645,
+      "reference_optimize_ms": 7272.515421005664,
+      "greedy_assigned": 40,
+      "greedy_distance": 62.756611510278184,
+      "available_distance_gain": 1.637623747857539
+    }
+  ]
+}

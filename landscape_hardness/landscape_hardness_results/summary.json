@@ -1,0 +1,54 @@
+{
+  "elapsed_minutes": 80.62379707983345,
+  "screened": 64,
+  "selected": [
+    [
+      "full_q_15x40_v8",
+      15
+    ],
+    [
+      "full_q_15x40_v8",
+      23
+    ],
+    [
+      "full_q_15x40_v8",
+      30
+    ],
+    [
+      "full_q_15x40_v8",
+      7
+    ],
+    [
+      "full_q_15x40_v8",
+      1
+    ],
+    [
+      "full_q_20x50_v8",
+      20
+    ],
+    [
+      "full_q_20x50_v8",
+      24
+    ],
+    [
+      "full_q_20x50_v8",
+      5
+    ],
+    [
+      "full_q_20x50_v8",
+      2
+    ],
+    [
+      "full_q_20x50_v8",
+      27
+    ]
+  ],
+  "nearest_width_rows": 30,
+  "full_thermal_rows": 366,
+  "controlled_barriers": 10,
+  "controlled_classical_rows": 90,
+  "quantum_time_rows": 280,
+  "quantum_hold_rows": 310,
+  "mechanism_candidates": 4,
+  "interpretation_note": "A mechanism_candidate means calibrated full PT failed to obtain 10% of the SCIP refinement while ideal coherent dynamics on a classically extracted controlled core put >10% probability on target-quality states. This is mechanistic evidence only, not quantum advantage."
+}

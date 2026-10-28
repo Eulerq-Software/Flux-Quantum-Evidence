@@ -1,0 +1,17 @@
+{
+  "format_version": 1,
+  "exports": {
+    "quantum_mechanism": {
+      "directory": "instances/local_subproblems/quantum_mechanism",
+      "num_cases": 8
+    },
+    "structured_exchange": {
+      "directory": "instances/local_subproblems/structured_exchange",
+      "num_cases": 8
+    },
+    "quantum_mechanism_rawpt": {
+      "num_cases": 2,
+      "selection_manifest": "instances/raw/quantum_mechanism_rawpt_selection.json"
+    }
+  }
+}

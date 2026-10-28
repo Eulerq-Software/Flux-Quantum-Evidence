@@ -1,0 +1,9 @@
+numpy
+scipy
+torch
+pyscipopt
+
+# For the analysis notebooks
+pandas
+matplotlib
+ipykernel
